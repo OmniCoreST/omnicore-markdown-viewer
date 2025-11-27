@@ -143,7 +143,10 @@ graph TD
 
 ## Screenshots
 
-<!-- Add screenshots here after building the app -->
+<div align="center">
+  <img src="ss/markdown-viewer_1.png" alt="Omnicore Markdown Viewer Screenshot" width="800">
+  <p><em>Omnicore Markdown Viewer in action</em></p>
+</div>
 
 ## Contributing
 
