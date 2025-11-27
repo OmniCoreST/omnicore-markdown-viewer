@@ -1,0 +1,71 @@
+{
+  "name": "omnicore-markdown-viewer",
+  "version": "1.0.0",
+  "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "build-installer": "electron-builder --win nsis",
+    "build-all": "electron-builder --win"
+  },
+  "keywords": ["markdown", "viewer", "electron", "mermaid", "omnicore"],
+  "author": "Omnicore",
+  "license": "MIT",
+  "homepage": "https://www.omnicore.com.tr",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OmniCoreST/omnicore-markdown-viewer.git"
+  },
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4"
+  },
+  "dependencies": {
+    "marked": "^9.1.6",
+    "mermaid": "^10.6.1",
+    "dompurify": "^3.0.6"
+  },
+  "build": {
+    "appId": "com.omnicore.markdownviewer",
+    "productName": "Omnicore Markdown Viewer",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!**/*.md"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        },
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "logo.ico",
+      "sign": null,
+      "fileAssociations": [
+        {
+          "ext": "md",
+          "name": "Markdown Document",
+          "description": "Markdown Document",
+          "icon": "logo.ico",
+          "role": "Viewer"
+        }
+      ]
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "logo.png"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "logo.png"
+    }
+  }
+}
