@@ -42,6 +42,7 @@
   "build": {
     "appId": "com.omnicore.markdownviewer",
     "productName": "Omnicore Markdown Viewer",
+    "publish": null,
     "directories": {
       "output": "dist"
     },
