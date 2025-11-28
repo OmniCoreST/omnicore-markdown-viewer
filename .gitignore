@@ -54,3 +54,7 @@ nul
 # Temporary files
 tmp/
 temp-*.html
+
+# Build artifacts
+release-artifacts/
+linux-builds/
