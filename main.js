@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 let mainWindow;
 let fileToOpen = null;
@@ -256,8 +257,8 @@ ipcMain.on('open-mermaid-popup', (event, data) => {
 
   popupWindow.setMenu(null);
 
-  // Write a temporary HTML file
-  const tempHtmlPath = path.join(__dirname, 'temp-mermaid.html');
+  // Write a temporary HTML file in system temp directory
+  const tempHtmlPath = path.join(os.tmpdir(), 'omnicore-temp-mermaid.html');
 
   // Create HTML with pan/zoom using matrix transform approach
   const htmlContent = `<!DOCTYPE html>
@@ -492,8 +493,8 @@ ipcMain.on('open-table-popup', (event, data) => {
 
   popupWindow.setMenu(null);
 
-  // Write a temporary HTML file
-  const tempHtmlPath = path.join(__dirname, 'temp-table.html');
+  // Write a temporary HTML file in system temp directory
+  const tempHtmlPath = path.join(os.tmpdir(), 'omnicore-temp-table.html');
 
   // Read Tabulator files from local directory
   const tabulatorJsPath = path.join(__dirname, 'libs', 'tabulator', 'tabulator.min.js');
