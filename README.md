@@ -11,20 +11,34 @@
 
 ## Features
 
-- **Full HTML Support** - Render HTML tags within markdown
-- **Mermaid Diagrams** - Beautiful diagram rendering with popup viewer (pan/zoom)
-- **PrismJS Syntax Highlighting** - Code blocks with Solarized Light theme (offline)
-- **Live Markdown Editor** - Side-by-side editing with real-time preview
-- **PDF Export** - One-click export with full document support
-- **Auto Table of Contents** - Hierarchical index of headers with one-click navigation
-- **Search with Highlighting** - Find text with real-time highlighting (Ctrl+F)
-- **File Path Display** - Shows current file with copy-to-clipboard
-- **Zoom Controls** - Keyboard shortcuts and mouse wheel zoom (50%-200%)
+### Core Rendering
+- **Full HTML Support** - Render HTML tags within markdown with DOMPurify sanitization
+- **Mermaid Diagrams** - Beautiful diagram rendering with interactive popup viewer featuring pan/zoom controls
+- **PrismJS Syntax Highlighting** - Code blocks with Solarized Light theme (offline support for 11+ languages)
+- **Interactive Tables** - Tabulator.js integration with sorting, filtering, pagination, and CSV/JSON export
+
+### Editing & Export
+- **Live Markdown Editor** - Split-view editing with 3-second debounced preview and Fira Code font
+- **PDF Export** - One-click export with full styling, diagrams, and syntax highlighting
+- **Auto-Save Detection** - Unsaved changes indicator with confirmation prompts
+
+### Navigation & UI
+- **Auto Table of Contents** - Hierarchical index of all headers (H1-H6) with one-click navigation
+- **Recent Files Manager** - Quick access to last 100 files with individual delete and clear all options
+- **Search with Highlighting** - Real-time text search with match counter and keyboard navigation (Ctrl+F)
+- **File Path Display** - Shows current file path with copy-to-clipboard functionality
+
+### View Controls
+- **Zoom Controls** - Flexible zoom from 50% to 200% via keyboard shortcuts or mouse wheel
 - **Fullscreen Mode** - Distraction-free viewing (F11)
-- **Recent Files** - Quick access to last 100 files with delete/clear all
-- **Professional Theme** - Clean interface with Omnicore branding
+- **Responsive Sidebars** - Auto-showing recent files panel and collapsible TOC
+
+### Additional Features
+- **Professional Theme** - Clean interface with Omnicore branding (#279EA7 teal, #1F3244 navy)
 - **Cross-Platform** - Works on Windows, macOS, and Linux
-- **Offline Support** - Works without internet connection
+- **Offline Support** - All libraries bundled locally, no internet required
+- **Single Instance** - Prevents multiple app instances
+- **Toast Notifications** - User-friendly feedback for all operations
 
 ## Installation
 
@@ -139,17 +153,55 @@ graph TD
 
 ## Technology Stack
 
-- **Electron** - Cross-platform desktop framework
-- **Marked** - Markdown parser
-- **Mermaid** - Diagram rendering
-- **DOMPurify** - HTML sanitization
-- **Fira Code** - Monospace font
+- **Electron 27.0** - Cross-platform desktop framework
+- **Marked** - Fast markdown parser with full GFM support
+- **Mermaid** - Diagram rendering engine (flowcharts, sequence diagrams, etc.)
+- **Tabulator.js 6.2.5** - Interactive table library with advanced features
+- **PrismJS** - Syntax highlighting for code blocks (11+ languages)
+- **DOMPurify** - XSS protection via HTML sanitization
+- **Fira Code** - Beautiful monospace font for code editing
 
 ## Screenshots
 
+### Main Interface with Table of Contents
 <div align="center">
-  <img src="ss/markdown-viewer_1.png" alt="Omnicore Markdown Viewer Screenshot" width="800">
-  <p><em>Omnicore Markdown Viewer in action</em></p>
+  <img src="ss/markdown-viewer_1.png" alt="Omnicore Markdown Viewer - Main Interface" width="800">
+  <p><em>Clean interface showing markdown rendering with Table of Contents sidebar</em></p>
+</div>
+
+### File Path Display and Toolbar
+<div align="center">
+  <img src="ss/markdown-viewer_2.png" alt="Markdown Viewer - Toolbar" width="800">
+  <p><em>Full toolbar with Open, Recent Files, TOC, Edit, PDF Export, Search, Zoom, and Fullscreen controls</em></p>
+</div>
+
+### Recent Files Manager
+<div align="center">
+  <img src="ss/markdown-viewer_recent_files.png" alt="Recent Files Panel" width="400">
+  <p><em>Quick access to recently opened files with individual delete options and clear all functionality</em></p>
+</div>
+
+### Hierarchical Table of Contents
+<div align="center">
+  <img src="ss/markdown-viewer_recent_toc.png" alt="Table of Contents" width="800">
+  <p><em>Auto-generated TOC showing all document headers with hierarchical indentation</em></p>
+</div>
+
+### Mermaid Diagram Popup Viewer
+<div align="center">
+  <img src="ss/markdown-viewer_recent_mermaid_open.png" alt="Mermaid Diagram with Popup Button" width="800">
+  <p><em>Mermaid diagrams with maximize button to open in dedicated viewer</em></p>
+</div>
+
+<div align="center">
+  <img src="ss/markdown-viewer_recent_mermaid_opened.png" alt="Mermaid Popup Window" width="800">
+  <p><em>Interactive Mermaid popup window with pan (click & drag) and zoom (scroll wheel) controls</em></p>
+</div>
+
+### Interactive Table Viewer (Tabulator.js)
+<div align="center">
+  <img src="ss/markdown-viewer_recent_table_popout.png" alt="Interactive Table Popup" width="800">
+  <p><em>Advanced table viewer with column sorting, filtering, pagination, and CSV/JSON export</em></p>
 </div>
 
 ## Contributing
