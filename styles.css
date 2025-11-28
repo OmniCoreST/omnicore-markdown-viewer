@@ -140,6 +140,63 @@ body {
   transform: translateY(0);
 }
 
+/* File Info Bar */
+.file-info-bar {
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-secondary);
+  animation: slideDown 0.3s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.file-icon {
+  color: var(--primary-color);
+  flex-shrink: 0;
+}
+
+.file-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.file-separator {
+  color: var(--border-color);
+  font-weight: 300;
+}
+
+.file-path {
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s ease;
+  user-select: all;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-path:hover {
+  color: var(--primary-color);
+  text-decoration: underline;
+}
+
 .content-wrapper {
   flex: 1;
   width: 100%;
@@ -236,7 +293,6 @@ body {
 }
 
 .markdown-body pre {
-  background: #fafafa;
   padding: 16px;
   border-radius: 8px;
   overflow-x: auto;
@@ -247,8 +303,13 @@ body {
 .markdown-body pre code {
   background: none;
   padding: 0;
-  color: var(--text-primary);
   font-size: 0.9em;
+}
+
+/* Ensure PrismJS uses Fira Code font */
+.markdown-body pre[class*="language-"],
+.markdown-body code[class*="language-"] {
+  font-family: 'Fira Code Local', 'Fira Code', 'Consolas', 'Courier New', monospace !important;
 }
 
 .markdown-body blockquote {
@@ -320,8 +381,6 @@ body {
   height: auto;
   border-radius: 8px;
   margin: 1em 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 1px solid var(--border-color);
 }
 
 .markdown-body kbd {
@@ -535,6 +594,32 @@ html {
   color: var(--secondary-color);
 }
 
+.recent-header-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.clear-all-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  border-radius: 4px;
+}
+
+.clear-all-btn:hover {
+  color: #e74c3c;
+  background: rgba(231, 76, 60, 0.1);
+}
+
 .close-btn {
   background: none;
   border: none;
@@ -568,19 +653,53 @@ html {
 }
 
 .recent-item {
-  padding: 12px 16px;
   margin: 4px 0;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  cursor: pointer;
   transition: all 0.2s ease;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
 }
 
 .recent-item:hover {
   background: var(--bg-tertiary);
   border-color: var(--primary-color);
+}
+
+.recent-item-content {
+  flex: 1;
+  padding: 12px 16px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.recent-delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 12px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  opacity: 0;
+  min-width: 32px;
+}
+
+.recent-item:hover .recent-delete-btn {
+  opacity: 1;
+}
+
+.recent-delete-btn:hover {
+  color: #e74c3c;
+  background: rgba(231, 76, 60, 0.1);
 }
 
 .recent-item-name {
@@ -698,4 +817,51 @@ html {
 .index-item.level-6 {
   padding-left: 72px;
   font-size: 11px;
+}
+
+/* Print styles - Hide UI elements and show only content */
+@media print {
+  /* Hide all UI elements */
+  .header,
+  .file-info-bar,
+  .search-panel,
+  .recent-panel,
+  .index-panel {
+    display: none !important;
+  }
+
+  /* Make container and content full width */
+  .container {
+    height: auto;
+  }
+
+  .main-content {
+    display: block;
+    position: static;
+  }
+
+  .content-wrapper {
+    overflow: visible;
+    height: auto;
+    width: 100%;
+  }
+
+  /* Ensure markdown content uses full width */
+  .markdown-body {
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Prevent page breaks inside code blocks and images */
+  .markdown-body pre,
+  .markdown-body img,
+  .markdown-body .mermaid {
+    page-break-inside: avoid;
+  }
+
+  /* Ensure backgrounds are printed */
+  body {
+    background: white;
+  }
 }

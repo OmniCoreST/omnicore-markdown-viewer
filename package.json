@@ -1,6 +1,6 @@
 {
   "name": "omnicore-markdown-viewer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
   "main": "main.js",
   "scripts": {
@@ -9,7 +9,13 @@
     "build-installer": "electron-builder --win nsis",
     "build-all": "electron-builder --win"
   },
-  "keywords": ["markdown", "viewer", "electron", "mermaid", "omnicore"],
+  "keywords": [
+    "markdown",
+    "viewer",
+    "electron",
+    "mermaid",
+    "omnicore"
+  ],
   "author": "Omnicore",
   "license": "MIT",
   "homepage": "https://www.omnicore.com.tr",
@@ -22,9 +28,10 @@
     "electron-builder": "^24.6.4"
   },
   "dependencies": {
+    "dompurify": "^3.0.6",
     "marked": "^9.1.6",
     "mermaid": "^10.6.1",
-    "dompurify": "^3.0.6"
+    "prismjs": "^1.30.0"
   },
   "build": {
     "appId": "com.omnicore.markdownviewer",
@@ -40,11 +47,15 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "logo.ico",
@@ -60,11 +71,15 @@
       ]
     },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "logo.png"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "icon": "logo.png"
     }
   }

@@ -44,3 +44,9 @@ fonts/*.ttf
 fonts/*.woff
 fonts/*.woff2
 !fonts/README.md
+
+# Claude Code documentation (local only)
+CLAUDE.md
+
+# Windows null device files
+nul

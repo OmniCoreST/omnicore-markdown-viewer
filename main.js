@@ -9,6 +9,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    show: false, // Don't show until ready
     title: 'Omnicore Markdown Viewer',
     backgroundColor: '#f5f5f5',
     webPreferences: {
@@ -19,10 +20,16 @@ function createWindow() {
     icon: path.join(__dirname, 'logo.ico')
   });
 
-  // Maximize window on start
-  mainWindow.maximize();
-
   mainWindow.loadFile('index.html');
+
+  // Hide the menu bar
+  mainWindow.setMenu(null);
+
+  // Show window only when content is ready (prevents flicker)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.maximize();
+    mainWindow.show();
+  });
 
   // Load file from command line after window loads
   mainWindow.webContents.on('did-finish-load', () => {
@@ -65,6 +72,12 @@ function createWindow() {
 function openFile(filePath) {
   if (!fs.existsSync(filePath)) {
     console.error('File not found:', filePath);
+    return;
+  }
+
+  // Ensure window is ready
+  if (!mainWindow || !mainWindow.webContents) {
+    console.error('Window not ready');
     return;
   }
 
@@ -123,6 +136,66 @@ function openFileDialog() {
 // Handle file open request from renderer
 ipcMain.on('open-file-dialog', () => {
   openFileDialog();
+});
+
+// Handle PDF export request from renderer
+ipcMain.on('export-pdf', async (event, data) => {
+  try {
+    const { currentFileName } = data;
+
+    // Determine default filename
+    let defaultFilename = 'document.pdf';
+    if (currentFileName) {
+      const nameWithoutExt = currentFileName.replace(/\.[^/.]+$/, '');
+      defaultFilename = `${nameWithoutExt}.pdf`;
+    }
+
+    // Show save dialog
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export to PDF',
+      defaultPath: defaultFilename,
+      filters: [
+        { name: 'PDF Files', extensions: ['pdf'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || !result.filePath) {
+      return;
+    }
+
+    // Generate PDF from current page
+    const pdfData = await mainWindow.webContents.printToPDF({
+      printBackground: true,
+      landscape: false,
+      marginsType: 1, // Minimum margins
+      pageSize: 'A4',
+      preferCSSPageSize: false
+    });
+
+    // Write PDF to file
+    fs.writeFile(result.filePath, pdfData, (err) => {
+      if (err) {
+        console.error('Error saving PDF:', err);
+        mainWindow.webContents.send('pdf-export-result', {
+          success: false,
+          error: err.message
+        });
+      } else {
+        console.log('PDF saved successfully:', result.filePath);
+        mainWindow.webContents.send('pdf-export-result', {
+          success: true,
+          path: result.filePath
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Error exporting PDF:', error);
+    mainWindow.webContents.send('pdf-export-result', {
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 // Handle file argument from command line or "Open with"

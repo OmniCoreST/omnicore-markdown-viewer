@@ -62,6 +62,51 @@ const toggleIndexBtn = document.getElementById('toggleIndex');
 const closeIndexBtn = document.getElementById('closeIndex');
 const indexPanel = document.getElementById('indexPanel');
 const indexList = document.getElementById('indexList');
+const fileInfoBar = document.getElementById('fileInfoBar');
+const fileName = document.getElementById('fileName');
+const filePath = document.getElementById('filePath');
+const exportPdfBtn = document.getElementById('exportPdf');
+
+// Current file tracking
+let currentFilePath = null;
+
+// Update file info display
+function updateFileInfo(path) {
+  if (!path) {
+    fileInfoBar.style.display = 'none';
+    currentFilePath = null;
+    return;
+  }
+
+  currentFilePath = path;
+  const pathParts = path.split(/[\\/]/);
+  const name = pathParts.pop();
+  const directory = pathParts.join('/');
+
+  fileName.textContent = name;
+  filePath.textContent = directory;
+  fileInfoBar.style.display = 'flex';
+}
+
+// Copy path to clipboard on click
+filePath.addEventListener('click', () => {
+  if (currentFilePath) {
+    navigator.clipboard.writeText(currentFilePath).then(() => {
+      // Visual feedback
+      const originalText = filePath.textContent;
+      filePath.textContent = '✓ Path copied to clipboard';
+      filePath.style.color = 'var(--primary-color)';
+      setTimeout(() => {
+        const pathParts = currentFilePath.split(/[\\/]/);
+        pathParts.pop(); // Remove filename
+        filePath.textContent = pathParts.join('/');
+        filePath.style.color = '';
+      }, 1500);
+    }).catch(err => {
+      console.error('Failed to copy path:', err);
+    });
+  }
+});
 
 // Update zoom display
 function updateZoom() {
@@ -109,6 +154,30 @@ openFileBtn.addEventListener('click', () => {
   ipcRenderer.send('open-file-dialog');
 });
 
+// Export to PDF button
+exportPdfBtn.addEventListener('click', () => {
+  if (!currentFilePath) {
+    alert('Please open a markdown file first before exporting to PDF.');
+    return;
+  }
+
+  const pathParts = currentFilePath.split(/[\\/]/);
+  const currentFileName = pathParts.pop();
+
+  ipcRenderer.send('export-pdf', { currentFileName });
+});
+
+// Handle PDF export result
+ipcRenderer.on('pdf-export-result', (event, data) => {
+  if (data.success) {
+    console.log('PDF exported successfully to:', data.path);
+    // Optional: Show success notification
+  } else {
+    console.error('PDF export failed:', data.error);
+    alert(`Failed to export PDF: ${data.error}`);
+  }
+});
+
 // Recent files panel toggle
 toggleRecentBtn.addEventListener('click', () => {
   recentPanel.classList.toggle('visible');
@@ -116,6 +185,15 @@ toggleRecentBtn.addEventListener('click', () => {
 
 closeRecentBtn.addEventListener('click', () => {
   recentPanel.classList.remove('visible');
+});
+
+// Clear all recent files
+const clearAllRecentBtn = document.getElementById('clearAllRecent');
+clearAllRecentBtn.addEventListener('click', () => {
+  if (confirm('Are you sure you want to clear all recent files?')) {
+    localStorage.removeItem('recentFiles');
+    updateRecentFilesList();
+  }
 });
 
 // Mouse hover to open recent panel
@@ -192,12 +270,28 @@ function updateRecentFilesList() {
   recentFiles.forEach(file => {
     const item = document.createElement('div');
     item.className = 'recent-item';
-    item.innerHTML = `
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'recent-item-content';
+    contentDiv.innerHTML = `
       <div class="recent-item-name">${file.name}</div>
       <div class="recent-item-path">${file.path}</div>
     `;
 
-    item.addEventListener('click', () => {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'recent-delete-btn';
+    deleteBtn.innerHTML = '×';
+    deleteBtn.title = 'Remove from recent files';
+
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent opening the file
+      let recentFiles = getRecentFiles();
+      recentFiles = recentFiles.filter(f => f.path !== file.path);
+      localStorage.setItem('recentFiles', JSON.stringify(recentFiles));
+      updateRecentFilesList();
+    });
+
+    contentDiv.addEventListener('click', () => {
       // Send request to main process to open this file
       const fs = require('fs');
       fs.readFile(file.path, 'utf8', (err, data) => {
@@ -211,11 +305,14 @@ function updateRecentFilesList() {
           return;
         }
         renderMarkdown(data);
+        updateFileInfo(file.path);
         saveRecentFile(file.path);
         recentPanel.classList.remove('visible');
       });
     });
 
+    item.appendChild(contentDiv);
+    item.appendChild(deleteBtn);
     recentList.appendChild(item);
   });
 }
@@ -556,6 +653,11 @@ async function renderMarkdown(content) {
     });
   }
 
+  // Apply syntax highlighting with PrismJS
+  if (typeof Prism !== 'undefined') {
+    Prism.highlightAll();
+  }
+
   // Build table of contents
   buildTableOfContents();
 
@@ -566,6 +668,9 @@ async function renderMarkdown(content) {
 // Handle file opened
 ipcRenderer.on('file-opened', async (event, data) => {
   await renderMarkdown(data.content);
+
+  // Update file info bar
+  updateFileInfo(data.path);
 
   // If multiple files were selected, add all to recent files
   if (data.allPaths && data.allPaths.length > 0) {

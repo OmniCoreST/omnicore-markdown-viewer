@@ -5,12 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Omnicore Markdown Viewer</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="libs/prismjs/themes/prism-solarizedlight.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <!-- PrismJS - Core and Language Components -->
+  <script src="libs/prismjs/prism.js"></script>
+  <script src="libs/prismjs/components/prism-markup.min.js"></script>
+  <script src="libs/prismjs/components/prism-css.min.js"></script>
+  <script src="libs/prismjs/components/prism-javascript.min.js"></script>
+  <script src="libs/prismjs/components/prism-typescript.min.js"></script>
+  <script src="libs/prismjs/components/prism-jsx.min.js"></script>
+  <script src="libs/prismjs/components/prism-tsx.min.js"></script>
+  <script src="libs/prismjs/components/prism-json.min.js"></script>
+  <script src="libs/prismjs/components/prism-python.min.js"></script>
+  <script src="libs/prismjs/components/prism-java.min.js"></script>
+  <script src="libs/prismjs/components/prism-c.min.js"></script>
+  <script src="libs/prismjs/components/prism-cpp.min.js"></script>
+  <script src="libs/prismjs/components/prism-csharp.min.js"></script>
+  <script src="libs/prismjs/components/prism-bash.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -44,6 +60,15 @@
             <line x1="3" y1="18" x2="3.01" y2="18"></line>
           </svg>
         </button>
+        <button class="btn" id="exportPdf" title="Export to PDF">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="12" y1="18" x2="12" y2="12"></line>
+            <polyline points="9 15 12 18 15 15"></polyline>
+          </svg>
+          PDF
+        </button>
         <button class="btn" id="zoomOut" title="Zoom Out (Ctrl+-)">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"></circle>
@@ -66,6 +91,17 @@
           </svg>
         </button>
       </div>
+    </div>
+
+    <!-- File Info Bar -->
+    <div id="fileInfoBar" class="file-info-bar" style="display: none;">
+      <svg class="file-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+        <polyline points="13 2 13 9 20 9"></polyline>
+      </svg>
+      <span id="fileName" class="file-name"></span>
+      <span class="file-separator">•</span>
+      <span id="filePath" class="file-path" title="Click to copy path"></span>
     </div>
 
     <!-- Search Panel -->
@@ -96,7 +132,15 @@
       <div id="recentPanel" class="recent-panel">
         <div class="recent-header">
           <span>Recent Files</span>
-          <button id="closeRecent" class="close-btn">×</button>
+          <div class="recent-header-buttons">
+            <button id="clearAllRecent" class="clear-all-btn" title="Clear All Recent Files">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+            <button id="closeRecent" class="close-btn">×</button>
+          </div>
         </div>
         <div id="recentList" class="recent-list">
           <div class="recent-empty">No recent files</div>
