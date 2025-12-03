@@ -232,6 +232,20 @@ logoLink.addEventListener('click', (e) => {
   shell.openExternal('https://www.omnicore.com.tr');
 });
 
+// Handle external links in rendered markdown - open in system browser
+viewer.addEventListener('click', (e) => {
+  // Find the closest anchor tag (in case click was on child element)
+  const link = e.target.closest('a');
+  if (link && link.href) {
+    const url = link.href;
+    // Check if it's an external web link (http or https)
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      e.preventDefault();
+      shell.openExternal(url);
+    }
+  }
+});
+
 // Open file button
 openFileBtn.addEventListener('click', () => {
   // Check for unsaved changes before opening file dialog

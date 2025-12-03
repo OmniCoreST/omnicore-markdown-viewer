@@ -91,6 +91,105 @@ body.dark-mode .header {
   background: #2d2d2d;
 }
 
+body.dark-mode .search-panel {
+  background: #2d2d2d;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+body.dark-mode .search-counter {
+  color: #3DBDC6;
+}
+
+body.dark-mode .search-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+body.dark-mode .search-btn:hover {
+  background: #3DBDC6;
+  border-color: #3DBDC6;
+}
+
+/* PrismJS Dark Mode - Tomorrow Night theme */
+body.dark-mode code[class*=language-],
+body.dark-mode pre[class*=language-] {
+  color: #ccc;
+  background: none;
+}
+
+body.dark-mode :not(pre) > code[class*=language-],
+body.dark-mode pre[class*=language-] {
+  background: #2d2d2d;
+}
+
+body.dark-mode .token.block-comment,
+body.dark-mode .token.cdata,
+body.dark-mode .token.comment,
+body.dark-mode .token.doctype,
+body.dark-mode .token.prolog {
+  color: #999;
+}
+
+body.dark-mode .token.punctuation {
+  color: #ccc;
+}
+
+body.dark-mode .token.attr-name,
+body.dark-mode .token.deleted,
+body.dark-mode .token.namespace,
+body.dark-mode .token.tag {
+  color: #e2777a;
+}
+
+body.dark-mode .token.function-name {
+  color: #6196cc;
+}
+
+body.dark-mode .token.boolean,
+body.dark-mode .token.function,
+body.dark-mode .token.number {
+  color: #f08d49;
+}
+
+body.dark-mode .token.class-name,
+body.dark-mode .token.constant,
+body.dark-mode .token.property,
+body.dark-mode .token.symbol {
+  color: #f8c555;
+}
+
+body.dark-mode .token.atrule,
+body.dark-mode .token.builtin,
+body.dark-mode .token.important,
+body.dark-mode .token.keyword,
+body.dark-mode .token.selector {
+  color: #cc99cd;
+}
+
+body.dark-mode .token.attr-value,
+body.dark-mode .token.char,
+body.dark-mode .token.regex,
+body.dark-mode .token.string,
+body.dark-mode .token.variable {
+  color: #7ec699;
+}
+
+body.dark-mode .token.entity,
+body.dark-mode .token.operator,
+body.dark-mode .token.url {
+  color: #67cdcc;
+}
+
+body.dark-mode .token.inserted {
+  color: #8fa876;
+}
+
+/* Dark mode inline code styling */
+body.dark-mode .markdown-body code {
+  background: #2d2d2d;
+  color: #ccc;
+}
+
 body {
   font-family: 'Fira Code Local', 'Fira Code', 'Segoe UI', Calibri, Arial, sans-serif;
   background: var(--bg-primary);
