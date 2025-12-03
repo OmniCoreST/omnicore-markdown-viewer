@@ -1,6 +1,6 @@
 {
   "name": "omnicore-markdown-viewer",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
   "main": "main.js",
   "scripts": {
@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "dompurify": "^3.0.6",
+    "electron-updater": "^6.1.7",
     "marked": "^9.1.6",
     "mermaid": "^10.6.1",
     "prismjs": "^1.30.0"
@@ -43,7 +44,11 @@
   "build": {
     "appId": "com.omnicore.markdownviewer",
     "productName": "Omnicore Markdown Viewer",
-    "publish": null,
+    "publish": {
+      "provider": "github",
+      "owner": "OmniCoreST",
+      "repo": "omnicore-markdown-viewer"
+    },
     "directories": {
       "output": "dist"
     },
@@ -93,6 +98,20 @@
           "description": "Markdown Document",
           "icon": "file-icon.ico",
           "role": "Viewer"
+        },
+        {
+          "ext": "mmd",
+          "name": "Mermaid Diagram",
+          "description": "Mermaid Diagram File",
+          "icon": "file-icon.ico",
+          "role": "Viewer"
+        },
+        {
+          "ext": "mermaid",
+          "name": "Mermaid Diagram",
+          "description": "Mermaid Diagram File",
+          "icon": "file-icon.ico",
+          "role": "Viewer"
         }
       ]
     },
@@ -106,6 +125,20 @@
           "ext": "md",
           "name": "Markdown Document",
           "description": "Markdown Document",
+          "icon": "file-icon.png",
+          "role": "Viewer"
+        },
+        {
+          "ext": "mmd",
+          "name": "Mermaid Diagram",
+          "description": "Mermaid Diagram File",
+          "icon": "file-icon.png",
+          "role": "Viewer"
+        },
+        {
+          "ext": "mermaid",
+          "name": "Mermaid Diagram",
+          "description": "Mermaid Diagram File",
           "icon": "file-icon.png",
           "role": "Viewer"
         }
@@ -125,6 +158,20 @@
           "name": "Markdown Document",
           "description": "Markdown Document",
           "mimeType": "text/markdown",
+          "icon": "file-icon.png"
+        },
+        {
+          "ext": "mmd",
+          "name": "Mermaid Diagram",
+          "description": "Mermaid Diagram File",
+          "mimeType": "text/x-mermaid",
+          "icon": "file-icon.png"
+        },
+        {
+          "ext": "mermaid",
+          "name": "Mermaid Diagram",
+          "description": "Mermaid Diagram File",
+          "mimeType": "text/x-mermaid",
           "icon": "file-icon.png"
         }
       ]

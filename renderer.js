@@ -1,29 +1,50 @@
-const { ipcRenderer, shell } = require('electron');
+const { ipcRenderer, shell, clipboard } = require('electron');
 
 // Libraries loaded from CDN in index.html
 // marked, mermaid, and DOMPurify are available globally
 
-// Initialize Mermaid
-mermaid.initialize({
-  startOnLoad: true,
-  theme: 'default',
-  themeVariables: {
-    primaryColor: '#279EA7',
-    primaryTextColor: '#1F3244',
-    primaryBorderColor: '#279EA7',
-    lineColor: '#279EA7',
-    secondaryColor: '#1F3244',
-    tertiaryColor: '#f5f5f5',
-    background: '#ffffff',
-    mainBkg: '#ffffff',
-    secondBkg: '#f5f5f5',
-    textColor: '#1F3244',
-    border1: '#d0d0d0',
-    border2: '#d0d0d0',
-    fontSize: '13px',
-    fontFamily: 'Fira Code Local, Fira Code, Segoe UI, Calibri, Arial, sans-serif'
-  }
-});
+// Initialize Mermaid with theme based on dark mode preference
+function initializeMermaidWithTheme() {
+  const isDark = localStorage.getItem('darkMode') === 'enabled';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: isDark ? 'dark' : 'default',
+    themeVariables: isDark ? {
+      primaryColor: '#3DBDC6',
+      primaryTextColor: '#e8e8e8',
+      primaryBorderColor: '#3DBDC6',
+      lineColor: '#3DBDC6',
+      secondaryColor: '#2d2d2d',
+      tertiaryColor: '#1a1a1a',
+      background: '#242424',
+      mainBkg: '#242424',
+      secondBkg: '#2d2d2d',
+      textColor: '#e8e8e8',
+      border1: '#404040',
+      border2: '#404040',
+      fontSize: '13px',
+      fontFamily: 'Fira Code Local, Fira Code, Segoe UI, Calibri, Arial, sans-serif'
+    } : {
+      primaryColor: '#279EA7',
+      primaryTextColor: '#1F3244',
+      primaryBorderColor: '#279EA7',
+      lineColor: '#279EA7',
+      secondaryColor: '#1F3244',
+      tertiaryColor: '#f5f5f5',
+      background: '#ffffff',
+      mainBkg: '#ffffff',
+      secondBkg: '#f5f5f5',
+      textColor: '#1F3244',
+      border1: '#d0d0d0',
+      border2: '#d0d0d0',
+      fontSize: '13px',
+      fontFamily: 'Fira Code Local, Fira Code, Segoe UI, Calibri, Arial, sans-serif'
+    }
+  });
+}
+
+// Initial mermaid setup
+initializeMermaidWithTheme();
 
 // Configure marked
 marked.setOptions({
@@ -175,8 +196,8 @@ function loadDarkModePreference() {
   }
 }
 
-// Update Mermaid theme based on dark mode
-function updateMermaidTheme(isDark) {
+// Update Mermaid theme based on dark mode and re-render diagrams
+async function updateMermaidTheme(isDark) {
   mermaid.initialize({
     startOnLoad: true,
     theme: isDark ? 'dark' : 'default',
@@ -212,6 +233,11 @@ function updateMermaidTheme(isDark) {
       fontFamily: 'Fira Code Local, Fira Code, Segoe UI, Calibri, Arial, sans-serif'
     }
   });
+
+  // Re-render existing content if there's markdown loaded
+  if (originalMarkdown) {
+    await renderMarkdown(originalMarkdown);
+  }
 }
 
 // Load dark mode on startup
@@ -457,6 +483,34 @@ function updateUnsavedIndicator() {
   }
 }
 
+// Pin functionality for recent panel
+const pinRecentPanelBtn = document.getElementById('pinRecentPanel');
+let isRecentPanelPinned = localStorage.getItem('recentPanelPinned') === 'true';
+
+// Initialize pinned state on load
+function initPinnedState() {
+  if (isRecentPanelPinned) {
+    pinRecentPanelBtn.classList.add('pinned');
+    pinRecentPanelBtn.title = 'Unpin panel';
+    recentPanel.classList.add('visible');
+  }
+}
+initPinnedState();
+
+// Toggle pin state
+pinRecentPanelBtn.addEventListener('click', () => {
+  isRecentPanelPinned = !isRecentPanelPinned;
+  localStorage.setItem('recentPanelPinned', isRecentPanelPinned);
+
+  if (isRecentPanelPinned) {
+    pinRecentPanelBtn.classList.add('pinned');
+    pinRecentPanelBtn.title = 'Unpin panel';
+  } else {
+    pinRecentPanelBtn.classList.remove('pinned');
+    pinRecentPanelBtn.title = 'Pin panel open';
+  }
+});
+
 // Recent files panel toggle
 toggleRecentBtn.addEventListener('click', () => {
   recentPanel.classList.toggle('visible');
@@ -464,6 +518,13 @@ toggleRecentBtn.addEventListener('click', () => {
 
 closeRecentBtn.addEventListener('click', () => {
   recentPanel.classList.remove('visible');
+  // Also unpin when manually closing
+  if (isRecentPanelPinned) {
+    isRecentPanelPinned = false;
+    localStorage.setItem('recentPanelPinned', 'false');
+    pinRecentPanelBtn.classList.remove('pinned');
+    pinRecentPanelBtn.title = 'Pin panel open';
+  }
 });
 
 // Clear all recent files
@@ -482,6 +543,9 @@ const HOVER_TRIGGER_ZONE = 10; // pixels from left edge
 const HOVER_DELAY = 500; // milliseconds
 
 document.addEventListener('mousemove', (e) => {
+  // Don't auto-show if panel is pinned (it's already visible)
+  if (isRecentPanelPinned) return;
+
   // Check if mouse is near the left edge
   if (e.clientX <= HOVER_TRIGGER_ZONE) {
     // Start timeout if not already started
@@ -505,9 +569,9 @@ document.addEventListener('mousemove', (e) => {
   }
 });
 
-// Close recent panel when clicking outside
+// Close recent panel when clicking outside (unless pinned)
 document.addEventListener('click', (e) => {
-  if (recentPanel.classList.contains('visible')) {
+  if (recentPanel.classList.contains('visible') && !isRecentPanelPinned) {
     // Check if click is outside the recent panel
     if (!recentPanel.contains(e.target) && e.target !== toggleRecentBtn) {
       recentPanel.classList.remove('visible');
@@ -1021,10 +1085,14 @@ async function renderMarkdown(content) {
       const highlightCallback = window.requestIdleCallback || window.setTimeout;
       highlightCallback(() => {
         Prism.highlightAll();
+        // Add copy buttons to code blocks after syntax highlighting
+        addCodeBlockCopyButtons();
         // Hide loading screen after syntax highlighting is done
         hideLoadingScreen();
       });
     } else {
+      // Add copy buttons even without Prism
+      addCodeBlockCopyButtons();
       // Hide loading screen if no syntax highlighting needed
       hideLoadingScreen();
     }
@@ -1089,6 +1157,71 @@ function addTableMaximizeButtons() {
     table.parentNode.insertBefore(container, table);
     container.appendChild(table);
     container.appendChild(maxBtn);
+  });
+}
+
+// Add copy buttons to code blocks
+function addCodeBlockCopyButtons() {
+  const codeBlocks = viewer.querySelectorAll('.markdown-body pre, #viewer pre');
+
+  codeBlocks.forEach((pre) => {
+    // Skip if already wrapped
+    if (pre.parentNode.classList?.contains('code-block-container')) {
+      return;
+    }
+
+    // Get the code element inside pre
+    const codeElement = pre.querySelector('code');
+    if (!codeElement) return;
+
+    // Create container
+    const container = document.createElement('div');
+    container.className = 'code-block-container';
+
+    // Create copy button
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'code-copy-btn';
+    copyBtn.title = 'Copy to clipboard';
+    copyBtn.innerHTML = `
+      <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+      <svg class="check-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+    `;
+
+    copyBtn.addEventListener('click', async () => {
+      // Get the raw text content (without formatting)
+      const textContent = codeElement.textContent;
+
+      try {
+        await navigator.clipboard.writeText(textContent);
+
+        // Show success feedback
+        const copyIcon = copyBtn.querySelector('.copy-icon');
+        const checkIcon = copyBtn.querySelector('.check-icon');
+        copyIcon.style.display = 'none';
+        checkIcon.style.display = 'block';
+        copyBtn.classList.add('copied');
+
+        // Reset after 2 seconds
+        setTimeout(() => {
+          copyIcon.style.display = 'block';
+          checkIcon.style.display = 'none';
+          copyBtn.classList.remove('copied');
+        }, 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+        showNotification('Failed to copy to clipboard', 2000);
+      }
+    });
+
+    // Wrap pre in container and add button
+    pre.parentNode.insertBefore(container, pre);
+    container.appendChild(pre);
+    container.appendChild(copyBtn);
   });
 }
 
@@ -1230,3 +1363,239 @@ ipcRenderer.on('show-error', (event, message) => {
 
 // Update zoom on load
 updateZoom();
+
+// ============================================
+// Auto-Update UI Handler
+// ============================================
+
+const appUpdateToast = document.getElementById('appUpdateToast');
+const updateTitle = document.getElementById('updateTitle');
+const updateMessage = document.getElementById('updateMessage');
+const updateProgress = document.getElementById('updateProgress');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const updateActions = document.getElementById('updateActions');
+const downloadUpdateBtn = document.getElementById('downloadUpdateBtn');
+const installUpdateBtn = document.getElementById('installUpdateBtn');
+const laterUpdateBtn = document.getElementById('laterUpdateBtn');
+const closeUpdateToast = document.getElementById('closeUpdateToast');
+
+let pendingUpdateVersion = null;
+
+function showUpdateToast() {
+  appUpdateToast.classList.add('show');
+}
+
+function hideUpdateToast() {
+  appUpdateToast.classList.remove('show');
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// Update status handler
+ipcRenderer.on('update-status', (event, data) => {
+  switch (data.status) {
+    case 'checking':
+      // Silent check, don't show UI
+      break;
+
+    case 'available':
+      pendingUpdateVersion = data.version;
+      updateTitle.textContent = 'Update Available';
+      updateMessage.textContent = `Version ${data.version} is ready to download`;
+      updateProgress.style.display = 'none';
+      downloadUpdateBtn.style.display = 'flex';
+      installUpdateBtn.style.display = 'none';
+      laterUpdateBtn.style.display = 'block';
+      updateActions.style.display = 'flex';
+      showUpdateToast();
+      break;
+
+    case 'not-available':
+      // Silent, no update available
+      break;
+
+    case 'downloading':
+      updateTitle.textContent = 'Downloading Update';
+      updateMessage.textContent = `${formatBytes(data.transferred)} / ${formatBytes(data.total)}`;
+      updateProgress.style.display = 'flex';
+      progressFill.style.width = `${data.percent}%`;
+      progressText.textContent = `${Math.round(data.percent)}%`;
+      downloadUpdateBtn.style.display = 'none';
+      laterUpdateBtn.style.display = 'none';
+      updateActions.style.display = 'none';
+      break;
+
+    case 'downloaded':
+      updateTitle.textContent = 'Update Ready';
+      updateMessage.textContent = `Version ${data.version} is ready to install`;
+      updateProgress.style.display = 'none';
+      downloadUpdateBtn.style.display = 'none';
+      installUpdateBtn.style.display = 'flex';
+      laterUpdateBtn.style.display = 'block';
+      updateActions.style.display = 'flex';
+      showUpdateToast();
+      break;
+
+    case 'error':
+      updateTitle.textContent = 'Update Error';
+      updateMessage.textContent = data.error || 'Failed to check for updates';
+      updateProgress.style.display = 'none';
+      downloadUpdateBtn.style.display = 'none';
+      installUpdateBtn.style.display = 'none';
+      laterUpdateBtn.style.display = 'block';
+      laterUpdateBtn.textContent = 'Dismiss';
+      updateActions.style.display = 'flex';
+      showUpdateToast();
+      break;
+
+    case 'dev-mode':
+      // Silent in dev mode
+      console.log('Auto-updater:', data.message);
+      break;
+  }
+});
+
+// Update button handlers
+downloadUpdateBtn.addEventListener('click', () => {
+  ipcRenderer.send('download-update');
+});
+
+installUpdateBtn.addEventListener('click', () => {
+  ipcRenderer.send('install-update');
+});
+
+laterUpdateBtn.addEventListener('click', () => {
+  hideUpdateToast();
+  laterUpdateBtn.textContent = 'Later'; // Reset text
+});
+
+closeUpdateToast.addEventListener('click', () => {
+  hideUpdateToast();
+  laterUpdateBtn.textContent = 'Later'; // Reset text
+});
+
+// ============================================
+// Context Menu
+// ============================================
+
+const contextMenu = document.getElementById('contextMenu');
+const ctxCopy = document.getElementById('ctxCopy');
+const ctxCopyPlain = document.getElementById('ctxCopyPlain');
+const ctxSelectAll = document.getElementById('ctxSelectAll');
+
+function showContextMenu(x, y) {
+  // Get selected text
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.toString().trim().length > 0;
+
+  // Enable/disable copy items based on selection
+  if (hasSelection) {
+    ctxCopy.classList.remove('disabled');
+    ctxCopyPlain.classList.remove('disabled');
+  } else {
+    ctxCopy.classList.add('disabled');
+    ctxCopyPlain.classList.add('disabled');
+  }
+
+  // Position the menu
+  contextMenu.style.left = `${x}px`;
+  contextMenu.style.top = `${y}px`;
+
+  // Show the menu
+  contextMenu.classList.add('visible');
+
+  // Adjust position if menu goes off screen
+  const menuRect = contextMenu.getBoundingClientRect();
+  const windowWidth = window.innerWidth;
+  const windowHeight = window.innerHeight;
+
+  if (menuRect.right > windowWidth) {
+    contextMenu.style.left = `${windowWidth - menuRect.width - 10}px`;
+  }
+  if (menuRect.bottom > windowHeight) {
+    contextMenu.style.top = `${windowHeight - menuRect.height - 10}px`;
+  }
+}
+
+function hideContextMenu() {
+  contextMenu.classList.remove('visible');
+}
+
+// Show context menu on right-click in viewer area
+viewer.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  showContextMenu(e.clientX, e.clientY);
+});
+
+// Also allow context menu in editor
+markdownEditor.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  showContextMenu(e.clientX, e.clientY);
+});
+
+// Hide context menu when clicking elsewhere
+document.addEventListener('click', (e) => {
+  if (!contextMenu.contains(e.target)) {
+    hideContextMenu();
+  }
+});
+
+// Hide context menu on scroll or resize
+document.addEventListener('scroll', hideContextMenu, true);
+window.addEventListener('resize', hideContextMenu);
+
+// Hide context menu on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    hideContextMenu();
+  }
+});
+
+// Copy with formatting (HTML)
+ctxCopy.addEventListener('click', () => {
+  if (ctxCopy.classList.contains('disabled')) return;
+
+  const selection = window.getSelection();
+  if (selection && selection.toString().trim()) {
+    // Use document.execCommand for copy with formatting
+    document.execCommand('copy');
+    showNotification('Copied to clipboard', 1500);
+  }
+  hideContextMenu();
+});
+
+// Copy as plain text
+ctxCopyPlain.addEventListener('click', () => {
+  if (ctxCopyPlain.classList.contains('disabled')) return;
+
+  const selection = window.getSelection();
+  if (selection && selection.toString().trim()) {
+    const plainText = selection.toString();
+    clipboard.writeText(plainText);
+    showNotification('Copied as plain text', 1500);
+  }
+  hideContextMenu();
+});
+
+// Select all
+ctxSelectAll.addEventListener('click', () => {
+  // Determine which element to select based on focus
+  if (isEditMode && document.activeElement === markdownEditor) {
+    markdownEditor.select();
+  } else {
+    // Select all content in viewer
+    const range = document.createRange();
+    range.selectNodeContents(viewer);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  hideContextMenu();
+});
