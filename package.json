@@ -1,6 +1,6 @@
 {
   "name": "omnicore-markdown-viewer",
-  "version": "1.5.0",
+  "version": "1.7.0",
   "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
   "main": "main.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "build-all": "electron-builder --win",
     "build-linux": "electron-builder --linux",
     "build-linux-appimage": "electron-builder --linux AppImage",
-    "build-linux-deb": "electron-builder --linux deb"
+    "build-linux-deb": "electron-builder --linux deb",
+    "release": "node scripts/release.js"
   },
   "keywords": [
     "markdown",

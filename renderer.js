@@ -1,4 +1,6 @@
 const { ipcRenderer, shell, clipboard } = require('electron');
+const fs = require('fs');
+const path = require('path');
 
 // Libraries loaded from CDN in index.html
 // marked, mermaid, and DOMPurify are available globally
@@ -111,6 +113,11 @@ let originalMarkdown = '';
 let previewDebounceTimer = null;
 const PREVIEW_DEBOUNCE_DELAY = 3000; // 3 seconds
 
+// Navigation history (for back/forward)
+let navigationHistory = [];
+let navigationIndex = -1;
+let isNavigating = false; // Flag to prevent adding to history during back/forward
+
 // Update file info display
 function updateFileInfo(path) {
   if (!path) {
@@ -146,6 +153,93 @@ filePath.addEventListener('click', () => {
     }).catch(err => {
       console.error('Failed to copy path:', err);
     });
+  }
+});
+
+// Navigation history functions
+const navBackBtn = document.getElementById('navBackBtn');
+const navForwardBtn = document.getElementById('navForwardBtn');
+
+function updateNavButtons() {
+  if (navBackBtn) navBackBtn.disabled = navigationIndex <= 0;
+  if (navForwardBtn) navForwardBtn.disabled = navigationIndex >= navigationHistory.length - 1;
+}
+
+function addToNavigationHistory(filePath, scrollPosition = 0) {
+  if (isNavigating) return; // Don't add during back/forward navigation
+
+  // Update scroll position of current entry before navigating away
+  if (navigationIndex >= 0 && navigationHistory[navigationIndex]) {
+    navigationHistory[navigationIndex].scrollPosition = contentWrapper.scrollTop;
+  }
+
+  // Remove any forward history when navigating to new file
+  if (navigationIndex < navigationHistory.length - 1) {
+    navigationHistory = navigationHistory.slice(0, navigationIndex + 1);
+  }
+
+  // Don't add if it's the same file
+  if (navigationHistory.length > 0 && navigationHistory[navigationHistory.length - 1].filePath === filePath) {
+    return;
+  }
+
+  navigationHistory.push({ filePath, scrollPosition });
+  navigationIndex = navigationHistory.length - 1;
+  updateNavButtons();
+}
+
+function navigateBack() {
+  if (navigationIndex <= 0) return;
+
+  // Save current scroll position
+  if (navigationHistory[navigationIndex]) {
+    navigationHistory[navigationIndex].scrollPosition = contentWrapper.scrollTop;
+  }
+
+  navigationIndex--;
+  const entry = navigationHistory[navigationIndex];
+  if (entry) {
+    isNavigating = true;
+    ipcRenderer.send('open-file-path', entry.filePath);
+    // Scroll position will be restored when file loads
+  }
+  updateNavButtons();
+}
+
+function navigateForward() {
+  if (navigationIndex >= navigationHistory.length - 1) return;
+
+  // Save current scroll position
+  if (navigationHistory[navigationIndex]) {
+    navigationHistory[navigationIndex].scrollPosition = contentWrapper.scrollTop;
+  }
+
+  navigationIndex++;
+  const entry = navigationHistory[navigationIndex];
+  if (entry) {
+    isNavigating = true;
+    ipcRenderer.send('open-file-path', entry.filePath);
+    // Scroll position will be restored when file loads
+  }
+  updateNavButtons();
+}
+
+// Navigation button click handlers
+if (navBackBtn) navBackBtn.addEventListener('click', navigateBack);
+if (navForwardBtn) navForwardBtn.addEventListener('click', navigateForward);
+
+// Keyboard navigation (left/right arrows)
+document.addEventListener('keydown', (e) => {
+  // Don't trigger if typing in input/textarea or if modifier keys are pressed
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    navigateBack();
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    navigateForward();
   }
 });
 
@@ -258,16 +352,58 @@ logoLink.addEventListener('click', (e) => {
   shell.openExternal('https://www.omnicore.com.tr');
 });
 
-// Handle external links in rendered markdown - open in system browser
+// Handle links in rendered markdown
 viewer.addEventListener('click', (e) => {
   // Find the closest anchor tag (in case click was on child element)
   const link = e.target.closest('a');
   if (link && link.href) {
     const url = link.href;
+
     // Check if it's an external web link (http or https)
     if (url.startsWith('http://') || url.startsWith('https://')) {
       e.preventDefault();
       shell.openExternal(url);
+      return;
+    }
+
+    // Check if it's a local file link (file:// or relative path)
+    // Get the href attribute directly to handle relative paths
+    const hrefAttr = link.getAttribute('href');
+    if (hrefAttr && !hrefAttr.startsWith('#') && !hrefAttr.startsWith('http')) {
+      e.preventDefault();
+
+      // Resolve the path relative to current file
+      let targetPath = hrefAttr;
+
+      // Handle file:// protocol
+      if (targetPath.startsWith('file://')) {
+        targetPath = targetPath.replace('file://', '');
+        // Handle Windows paths like file:///C:/...
+        if (targetPath.startsWith('/') && targetPath[2] === ':') {
+          targetPath = targetPath.substring(1);
+        }
+      }
+
+      // If it's a relative path, resolve it against current file's directory
+      if (currentFilePath && !path.isAbsolute(targetPath)) {
+        const currentDir = path.dirname(currentFilePath);
+        targetPath = path.resolve(currentDir, targetPath);
+      }
+
+      // Check if the file exists
+      if (fs.existsSync(targetPath)) {
+        // Check if it's a markdown or mermaid file
+        const ext = path.extname(targetPath).toLowerCase();
+        if (['.md', '.markdown', '.mmd', '.mermaid'].includes(ext)) {
+          // Open the markdown file in this app
+          ipcRenderer.send('open-file-path', targetPath);
+        } else {
+          // Open other files with system default app
+          shell.openPath(targetPath);
+        }
+      } else {
+        showNotification(`File not found: ${path.basename(targetPath)}`, 4000);
+      }
     }
   }
 });
@@ -658,37 +794,9 @@ function updateRecentFilesList() {
         }
       }
 
-      // Send request to main process to open this file
-      const fs = require('fs');
-      fs.readFile(file.path, 'utf8', (err, data) => {
-        if (err) {
-          console.error('Error reading file:', err);
-          // Remove from recent files if it doesn't exist
-          let recentFiles = getRecentFiles();
-          recentFiles = recentFiles.filter(f => f.path !== file.path);
-          localStorage.setItem('recentFiles', JSON.stringify(recentFiles));
-          updateRecentFilesList();
-          return;
-        }
-        // Store original markdown for editor
-        originalMarkdown = data;
-
-        // If in edit mode, update editor content
-        if (isEditMode) {
-          markdownEditor.value = originalMarkdown;
-          hasUnsavedChanges = false;
-          updateUnsavedIndicator();
-        }
-
-        renderMarkdown(data);
-        updateFileInfo(file.path);
-        saveRecentFile(file.path);
-        recentPanel.classList.remove('visible');
-
-        // Start watching the file
-        ipcRenderer.send('start-file-watching', { filePath: file.path });
-        isFileTrackingActive = true;
-      });
+      // Use the standard file opening path via IPC
+      ipcRenderer.send('open-file-path', file.path);
+      recentPanel.classList.remove('visible');
     });
 
     item.appendChild(contentDiv);
@@ -1285,6 +1393,24 @@ ipcRenderer.on('file-opened', async (event, data) => {
   // Update file info bar
   updateFileInfo(data.path);
 
+  // Handle navigation history and scroll position
+  if (isNavigating) {
+    // Restore scroll position for back/forward navigation
+    const entry = navigationHistory[navigationIndex];
+    if (entry && entry.scrollPosition) {
+      // Small delay to ensure content is rendered
+      setTimeout(() => {
+        contentWrapper.scrollTop = entry.scrollPosition;
+      }, 100);
+    }
+    isNavigating = false;
+  } else {
+    // Add to navigation history for normal file opens
+    addToNavigationHistory(data.path, 0);
+    // Scroll to top for new files
+    contentWrapper.scrollTop = 0;
+  }
+
   // Enable file tracking
   isFileTrackingActive = true;
 
@@ -1317,6 +1443,20 @@ ipcRenderer.on('file-deleted', (event, data) => {
   console.log('File deleted:', data.path);
   showNotification('Warning: The opened file has been deleted from disk', 5000);
   isFileTrackingActive = false;
+});
+
+// Handle file not found (from recent files or links)
+ipcRenderer.on('file-not-found', (event, data) => {
+  console.log('File not found:', data.path);
+  showNotification(`File not found: ${path.basename(data.path)}`, 4000);
+
+  // Remove from recent files if it exists there
+  let recentFiles = getRecentFiles();
+  const filtered = recentFiles.filter(f => f.path !== data.path);
+  if (filtered.length !== recentFiles.length) {
+    localStorage.setItem('recentFiles', JSON.stringify(filtered));
+    updateRecentFilesList();
+  }
 });
 
 // Handle file reload result

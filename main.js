@@ -76,7 +76,7 @@ function createWindow() {
     }
   });
 
-  // Open DevTools in development
+  // Open DevTools in development (F12 to toggle)
   // mainWindow.webContents.openDevTools();
 
   mainWindow.on('closed', () => {
@@ -95,7 +95,10 @@ function createWindow() {
       }
     }
 
-    if (input.key === 'F11' && input.type === 'keyDown') {
+    if (input.key === 'F12' && input.type === 'keyDown') {
+      event.preventDefault();
+      mainWindow.webContents.toggleDevTools();
+    } else if (input.key === 'F11' && input.type === 'keyDown') {
       event.preventDefault();
       mainWindow.setFullScreen(!mainWindow.isFullScreen());
     } else if (input.key === 'Escape' && input.type === 'keyDown') {
@@ -302,6 +305,16 @@ function openFileDialog() {
 // Handle file open request from renderer
 ipcMain.on('open-file-dialog', () => {
   openFileDialog();
+});
+
+// Handle direct file path open request from renderer (for markdown links)
+ipcMain.on('open-file-path', (event, filePath) => {
+  if (filePath && fs.existsSync(filePath)) {
+    openFile(filePath);
+  } else if (filePath) {
+    // File doesn't exist - notify renderer to update recent files
+    mainWindow.webContents.send('file-not-found', { path: filePath });
+  }
 });
 
 // Handle PDF export request from renderer

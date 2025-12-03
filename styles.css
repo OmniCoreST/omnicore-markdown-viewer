@@ -324,6 +324,47 @@ body.dark-mode .file-info-bar {
   flex-shrink: 0;
 }
 
+/* Navigation buttons */
+.nav-btn {
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: rgba(39, 158, 167, 0.1);
+  color: var(--primary-color);
+}
+
+.nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.nav-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.nav-separator {
+  width: 1px;
+  height: 16px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
+body.dark-mode .nav-btn:hover:not(:disabled) {
+  background: rgba(61, 189, 198, 0.15);
+  color: #3DBDC6;
+}
+
 .file-name {
   font-weight: 600;
   color: var(--text-primary);
