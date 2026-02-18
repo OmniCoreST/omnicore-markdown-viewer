@@ -1406,6 +1406,20 @@ if (welcomeOpenBtn) {
   });
 }
 
+// Welcome screen "Read README.md" button
+const welcomeReadmeBtn = document.getElementById('welcomeReadmeBtn');
+if (welcomeReadmeBtn) {
+  welcomeReadmeBtn.addEventListener('click', async () => {
+    try {
+      const appPath = await ipcRenderer.invoke('get-app-path');
+      const readmePath = path.join(appPath, 'README.md');
+      ipcRenderer.send('open-file-path', readmePath);
+    } catch (e) {
+      showNotification('README.md not found', 2000);
+    }
+  });
+}
+
 // Refresh button
 refreshBtn.addEventListener('click', () => {
   if (!currentFilePath) {
