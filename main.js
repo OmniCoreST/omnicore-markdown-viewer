@@ -2022,10 +2022,14 @@ app.on('window-all-closed', () => {
 // ============================================
 
 // Only configure auto-updater if it's available
+// Portable .exe detection: electron-builder sets PORTABLE_EXECUTABLE_DIR for portable builds.
+// Auto-update (quitAndInstall) does not work for portable — redirect to releases page instead.
+const isPortable = !!process.env.PORTABLE_EXECUTABLE_DIR;
+
 if (autoUpdater) {
   // Configure auto-updater
   autoUpdater.autoDownload = false; // Don't download automatically, let user decide
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = !isPortable; // Pointless for portable builds
 
   // Auto-updater event handlers
   autoUpdater.on('checking-for-update', () => {
@@ -2036,13 +2040,14 @@ if (autoUpdater) {
   });
 
   autoUpdater.on('update-available', (info) => {
-    log('Auto-updater: Update available:', info.version);
+    log('Auto-updater: Update available:', info.version, isPortable ? '(portable)' : '(installer)');
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('update-status', {
         status: 'available',
         version: info.version,
         releaseNotes: info.releaseNotes,
-        releaseDate: info.releaseDate
+        releaseDate: info.releaseDate,
+        portable: isPortable  // renderer uses this to open browser instead of in-app install
       });
     }
   });
@@ -2122,7 +2127,7 @@ ipcMain.on('download-update', () => {
 
 ipcMain.on('install-update', () => {
   log('Install update requested');
-  if (autoUpdater) {
+  if (autoUpdater && !isPortable) {
     autoUpdater.quitAndInstall(false, true);
   }
 });
