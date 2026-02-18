@@ -92,15 +92,13 @@
           "target": "portable",
           "arch": [
             "x64"
-          ],
-          "artifactName": "Omnicore.Markdown.Viewer.${version}.${ext}"
+          ]
         },
         {
           "target": "nsis",
           "arch": [
             "x64"
-          ],
-          "artifactName": "Omnicore.Markdown.Viewer.Setup.${version}.${ext}"
+          ]
         }
       ],
       "icon": "logo.ico",
@@ -134,7 +132,8 @@
           "icon": "file-icon.ico",
           "role": "Viewer"
         }
-      ]
+      ],
+      "artifactName": "Omnicore.Markdown.Viewer.${version}.${ext}"
     },
     "mac": {
       "target": [
@@ -212,6 +211,9 @@
         "from": "README.md",
         "to": "README.md"
       }
-    ]
+    ],
+    "nsis": {
+      "artifactName": "Omnicore.Markdown.Viewer.Setup.${version}.${ext}"
+    }
   }
 }
