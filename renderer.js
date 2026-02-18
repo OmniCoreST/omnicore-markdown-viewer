@@ -2796,11 +2796,69 @@ function detectRenderMode(oldContent, newContent) {
   return 'full';
 }
 
-// Light-format render: skip mermaid/omniware/prism, just update HTML
-async function renderLightFormat(content, generation) {
-  showLoadingScreen();
-  await new Promise(resolve => setTimeout(resolve, 5));
-  if (generation !== renderGeneration) { hideLoadingScreen(); return; }
+// ---- Incremental DOM patching helpers ----
+
+// Lightweight hash for block identity (FNV-inspired)
+function _blockHash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+
+// Get block hash from an element, looking inside known wrapper divs if needed
+function _getBlockHash(el) {
+  if (el.dataset && el.dataset.blockHash) return el.dataset.blockHash;
+  // code-block-container / table-container wrap the real element as first non-button child
+  if (el.classList && (el.classList.contains('code-block-container') || el.classList.contains('table-container'))) {
+    for (const child of el.children) {
+      if (child.tagName !== 'BUTTON' && child.dataset && child.dataset.blockHash) return child.dataset.blockHash;
+    }
+  }
+  return null;
+}
+
+// Patch viewer's top-level children in-place — only replace nodes that actually changed.
+// Unchanged nodes (same hash) are left untouched, preserving scroll position and event listeners.
+function patchViewerDOM(newHtml) {
+  const temp = document.createElement('div');
+  temp.innerHTML = newHtml;
+
+  // Stamp each new element with a hash of its content (computed before setting the attr)
+  const newEls = Array.from(temp.children);
+  newEls.forEach(el => { el.dataset.blockHash = _blockHash(el.outerHTML); });
+
+  const oldEls = Array.from(viewer.children);
+  const maxLen = Math.max(newEls.length, oldEls.length);
+
+  for (let i = 0; i < maxLen; i++) {
+    const nEl = newEls[i];
+    const oEl = oldEls[i];
+
+    if (!nEl) { oEl.remove(); continue; }
+    if (!oEl) { viewer.appendChild(nEl); continue; }
+
+    // Mermaid: old element already has rendered SVG — compare source only
+    if (nEl.classList.contains('mermaid') && oEl.classList.contains('mermaid')) {
+      const nSrc = nEl.dataset.mermaidSrc || nEl.textContent.trim();
+      const oSrc = oEl.dataset.mermaidSrc || '';
+      if (nSrc !== oSrc) viewer.replaceChild(nEl, oEl);
+      continue; // keep existing SVG if same source
+    }
+
+    // General: compare content hashes
+    const nHash = nEl.dataset.blockHash;
+    const oHash = _getBlockHash(oEl);
+    if (nHash && oHash && nHash === oHash) continue; // identical — skip
+
+    viewer.replaceChild(nEl, oEl);
+  }
+}
+
+// ---- End incremental DOM patching ----
+
+// Light-format render: skip mermaid/omniware/prism, patch only changed DOM nodes
+function renderLightFormat(content, generation) {
+  if (generation !== renderGeneration) return;
 
   content = removeBOM(content);
 
@@ -2814,9 +2872,10 @@ async function renderLightFormat(content, generation) {
 
   let html = marked.parse(content);
 
-  // Restore mermaid as-is (existing rendered SVGs stay)
+  // Restore mermaid placeholders — patchViewerDOM will keep existing SVGs for same source
   mermaidBlocks.forEach(({ ph, code }) => {
-    html = html.replace(ph, `<pre class="mermaid">${code}</pre>`);
+    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    html = html.replace(ph, `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`);
   });
 
   // Protect data URIs
@@ -2836,20 +2895,17 @@ async function renderLightFormat(content, generation) {
     html = html.replace(`https://data-uri-placeholder.local/${idx}`, uri);
   });
 
-  if (generation !== renderGeneration) { hideLoadingScreen(); return; }
+  if (generation !== renderGeneration) return;
 
-  viewer.innerHTML = html;
+  patchViewerDOM(html);
   applyNoteStyles();
   addTableMaximizeButtons();
   initImageZoom();
   buildTableOfContents();
   updateShowNotesToggleVisibility();
   updateNotesList();
-
-  // Targeted highlighting: only highlight NEW code blocks
   highlightNewElements();
   addCodeBlockCopyButtons();
-  hideLoadingScreen();
 }
 
 // Highlight only elements not yet processed by Prism
@@ -2869,7 +2925,7 @@ async function renderMarkdown(content, forceMode = null) {
 
   if (mode === 'light-format' && _lastRenderedContent !== null) {
     _lastRenderedContent = content;
-    await renderLightFormat(content, generation);
+    renderLightFormat(content, generation); // sync — no await needed
     return;
   }
 
@@ -3000,8 +3056,8 @@ async function renderMarkdownFull(content, generation) {
       }
     });
 
-  // Set HTML content
-  viewer.innerHTML = html;
+  // Patch only changed DOM nodes — preserves scroll, avoids full relayout
+  patchViewerDOM(html);
 
   // Apply note styles immediately after DOM insertion (before async callbacks)
   applyNoteStyles();
@@ -3013,7 +3069,8 @@ async function renderMarkdownFull(content, generation) {
       const toRender = [];
 
       mermaidElements.forEach((el, index) => {
-        const src = el.textContent.trim();
+        // Use data-mermaid-src when available (kept elements already have SVG in textContent)
+        const src = el.dataset.mermaidSrc || el.textContent.trim();
         el.dataset.mermaidSrc = src;
 
         if (mermaidSvgCache.has(src)) {
