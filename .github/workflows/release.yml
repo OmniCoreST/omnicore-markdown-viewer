@@ -15,7 +15,7 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - name: Check out Git repository
@@ -41,6 +41,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build macOS packages
+        if: matrix.os == 'macos-latest'
+        run: npm run build-mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload Linux artifacts
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
@@ -61,6 +67,15 @@ jobs:
             dist/*.blockmap
             dist/latest.yml
 
+      - name: Upload macOS artifacts
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-builds
+          path: |
+            dist/*.dmg
+            dist/latest-mac.yml
+
   create-release:
     needs: release
     runs-on: ubuntu-latest
@@ -76,6 +91,7 @@ jobs:
           files: |
             linux-builds/*
             windows-builds/*
+            mac-builds/*
           draft: false
           prerelease: false
         env:

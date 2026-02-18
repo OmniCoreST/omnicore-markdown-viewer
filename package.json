@@ -11,6 +11,7 @@
     "build-linux": "electron-builder --linux",
     "build-linux-appimage": "electron-builder --linux AppImage",
     "build-linux-deb": "electron-builder --linux deb",
+    "build-mac": "electron-builder --mac",
     "release": "node scripts/release.js"
   },
   "keywords": [
