@@ -92,13 +92,15 @@
           "target": "portable",
           "arch": [
             "x64"
-          ]
+          ],
+          "artifactName": "Omnicore.Markdown.Viewer.${version}.${ext}"
         },
         {
           "target": "nsis",
           "arch": [
             "x64"
-          ]
+          ],
+          "artifactName": "Omnicore.Markdown.Viewer.Setup.${version}.${ext}"
         }
       ],
       "icon": "logo.ico",
