@@ -3584,7 +3584,6 @@ const laterUpdateBtn = document.getElementById('laterUpdateBtn');
 const closeUpdateToast = document.getElementById('closeUpdateToast');
 
 let pendingUpdateVersion = null;
-let pendingUpdateIsPortable = false;
 
 function showUpdateToast() {
   appUpdateToast.classList.add('show');
@@ -3605,13 +3604,11 @@ ipcRenderer.on('update-status', (event, data) => {
 
     case 'available':
       pendingUpdateVersion = data.version;
-      pendingUpdateIsPortable = !!data.portable;
       updateTitle.textContent = i18n('updateAvailable');
       updateMessage.textContent = i18n('update.versionReady', {version: data.version});
       updateProgress.style.display = 'none';
       downloadUpdateBtn.style.display = 'flex';
-      // Portable builds can't use in-app install — button label reflects this
-      downloadUpdateBtn.textContent = pendingUpdateIsPortable ? i18n('update.openDownloadPage') : i18n('update.download');
+      downloadUpdateBtn.textContent = i18n('update.download');
       installUpdateBtn.style.display = 'none';
       laterUpdateBtn.style.display = 'block';
       updateActions.style.display = 'flex';
@@ -3665,13 +3662,7 @@ ipcRenderer.on('update-status', (event, data) => {
 
 // Update button handlers
 downloadUpdateBtn.addEventListener('click', () => {
-  if (pendingUpdateIsPortable) {
-    // Portable: can't auto-install — open releases page in browser
-    shell.openExternal('https://github.com/OmniCoreST/omnicore-markdown-viewer/releases/latest');
-    hideUpdateToast();
-  } else {
-    ipcRenderer.send('download-update');
-  }
+  ipcRenderer.send('download-update');
 });
 
 installUpdateBtn.addEventListener('click', () => {
