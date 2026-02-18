@@ -43,15 +43,6 @@
 ### Image Slider
 
 Create auto-playing image carousels by wrapping images in slider tags:
-
-```markdown
-<!-- slider-start -->
-![Caption 1](image1.png)
-![Caption 2](image2.png)
-![Caption 3](image3.png)
-<!-- slider-end -->
-```
-
 - Auto-plays every 5 seconds, pauses on hover
 - Navigation arrows and dot indicators with slide counter
 - Click the zoom button on any slide to open it in a dedicated popup window
@@ -306,18 +297,6 @@ graph TD
 ````
 
 Right-click anywhere in the document and choose **Insert Mermaid** to pick from 12 built-in templates.
-
-## Image Slider
-
-Wrap images between slider tags to create an auto-playing carousel:
-
-```markdown
-<!-- slider-start -->
-![First slide](image1.png)
-![Second slide](image2.png)
-![Third slide](image3.png)
-<!-- slider-end -->
-```
 
 The slider auto-plays every 5 seconds, pauses on hover, and each slide can be opened in a zoom popup.
 
