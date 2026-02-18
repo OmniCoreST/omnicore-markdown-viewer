@@ -2508,6 +2508,8 @@ body.dark-mode .context-menu {
 .image-slider {
   position: relative;
   width: 100%;
+  max-width: 1000px;
+  height: 450px;
   border-radius: 8px;
   overflow: hidden;
   background: var(--bg-tertiary);
@@ -2518,14 +2520,18 @@ body.dark-mode .context-menu {
 .slider-track {
   display: flex;
   width: 100%;
+  height: 100%;
 }
 
 .slider-slide {
+  position: relative;
   min-width: 100%;
+  height: 100%;
   display: none;
   justify-content: center;
   align-items: center;
   padding: 8px;
+  box-sizing: border-box;
 }
 
 .slider-slide.active {
@@ -2534,10 +2540,17 @@ body.dark-mode .context-menu {
 
 .slider-slide img {
   max-width: 100%;
-  max-height: 500px;
+  max-height: 100%;
   object-fit: contain;
   border-radius: 6px;
   margin: 0;
+}
+
+.slider-slide .img-zoom-btn {
+  opacity: 0;
+}
+.slider-slide:hover .img-zoom-btn {
+  opacity: 1;
 }
 
 .slider-btn {
@@ -2598,52 +2611,6 @@ body.dark-mode .context-menu {
   font-weight: 500;
 }
 
-.slider-zoom-btn {
-  background: none;
-  border: 1px solid rgba(255,255,255,0.6);
-  color: #fff;
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 14px;
-  cursor: pointer;
-  line-height: 1.2;
-}
-.slider-zoom-btn:hover { background: rgba(255,255,255,0.2); }
-
-/* Zoom overlay */
-.slider-zoom-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.88);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-}
-
-.slider-zoom-overlay img {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-  border-radius: 8px;
-}
-
-.slider-zoom-close {
-  position: absolute;
-  top: 16px;
-  right: 20px;
-  background: rgba(255,255,255,0.15);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  width: 36px;
-  height: 36px;
-  font-size: 22px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
 /* ============================================
    IMAGE ZOOM
