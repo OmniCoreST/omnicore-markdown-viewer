@@ -114,6 +114,7 @@ const UI_STRINGS = {
     'language': 'Language', 'document': 'Document', 'interface': 'Interface',
     'original': 'Original', 'english': 'English', 'turkish': 'Turkish',
     'notif.translationFailed': 'Translation failed: ',
+    'notif.translationInProgress': 'Translation in progress...',
     'notif.sectionNotFound': 'Section not found: ',
     'notif.fileNotFound': 'File not found: ',
     'notif.preparingWord': 'Preparing Word export...',
@@ -234,6 +235,7 @@ const UI_STRINGS = {
     'language': 'Dil', 'document': 'Belge', 'interface': 'Arayüz',
     'original': 'Orijinal', 'english': 'İngilizce', 'turkish': 'Türkçe',
     'notif.translationFailed': 'Çeviri başarısız: ',
+    'notif.translationInProgress': 'Çeviri devam ediyor...',
     'notif.sectionNotFound': 'Bölüm bulunamadı: ',
     'notif.fileNotFound': 'Dosya bulunamadı: ',
     'notif.preparingWord': 'Word dışa aktarma hazırlanıyor...',
@@ -960,6 +962,57 @@ function commitViewModeEdit(newContent, scrollPosition, syncFn) {
   hasUnsavedChanges = true;
 }
 
+// Update markdown source without triggering a full re-render (used when DOM is already patched).
+function updateSourceSilently(newContent, syncFn) {
+  if (isShowingTranslation && translatedMarkdown) {
+    translatedMarkdown = newContent;
+    if (syncFn) syncFn();
+    clearTimeout(enViewResyncTimer);
+    enViewResyncTimer = setTimeout(() => {
+      if (isShowingTranslation && originalMarkdown) startBackgroundTranslation(true);
+    }, 2000);
+  } else {
+    originalMarkdown = newContent;
+    invalidateTranslationCache();
+    if (syncFn) syncFn();
+  }
+  hasUnsavedChanges = true;
+}
+
+// Wrap the saved DOM range in an inline element (strong/em/code) without re-rendering.
+// Returns true on success, false if the range spans multiple elements (fall back to full render).
+function patchInlineFormatInDOM(tagName) {
+  if (!savedRange) return false;
+  try {
+    const el = document.createElement(tagName);
+    savedRange.surroundContents(el);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Remove an inline formatting element (strong/em/code) wrapping the saved selection in the DOM.
+// Returns true on success, false if not applicable (fall back to full render).
+function patchRemoveFormatInDOM() {
+  if (!savedRange) return false;
+  try {
+    const ancestor = savedRange.commonAncestorContainer;
+    let node = ancestor.nodeType === Node.TEXT_NODE ? ancestor.parentElement : ancestor;
+    while (node && node !== viewer) {
+      if (['STRONG', 'EM', 'CODE'].includes(node.tagName)) {
+        const textNode = document.createTextNode(node.textContent);
+        node.parentNode.replaceChild(textNode, node);
+        return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 function closeAllDropdowns() {
   fileMenu.classList.remove('visible');
   viewMenu.classList.remove('visible');
@@ -1038,21 +1091,10 @@ async function switchToLanguage(targetLang) {
     await renderMarkdown(translatedMarkdown);
     contentWrapper.scrollTop = scrollPos;
   } else {
-    // Need to wait for translation
-    showLoadingScreen();
+    // Non-blocking: start translation in background and let the user keep working.
+    // startBackgroundTranslation will auto-render when done (if isShowingTranslation is still true).
     if (!isBackgroundTranslating) startBackgroundTranslation();
-    await waitForTranslation();
-    if (!isShowingTranslation) return; // user switched back while waiting
-    if (translatedMarkdown) {
-      await renderMarkdown(translatedMarkdown);
-    } else {
-      // Translation failed — revert
-      isShowingTranslation = false;
-      updateToolsMenuState();
-      hideLoadingScreen();
-      return;
-    }
-    hideLoadingScreen();
+    showNotification(i18n('notif.translationInProgress'), 4000);
   }
 
   updateToolsMenuState();
@@ -1081,14 +1123,39 @@ function loadDarkModePreference() {
   }
 }
 
-// Update Mermaid theme based on dark mode and re-render diagrams
+// Update Mermaid theme based on dark mode.
+// Only re-renders the mermaid SVG elements in-place — no full page re-render.
+// All other dark mode styling is handled instantly by the .dark-mode CSS class.
 async function updateMermaidTheme(isDark) {
-  mermaidSvgCache.clear(); // SVG colours differ between themes
+  mermaidSvgCache.clear(); // SVG colours are baked into the SVG, must re-render
   mermaid.initialize(getMermaidConfig(isDark));
 
-  // Re-render existing content if there's markdown loaded
-  if (originalMarkdown) {
-    await renderMarkdown(originalMarkdown);
+  const mermaidElements = viewer.querySelectorAll('.mermaid');
+  if (mermaidElements.length === 0) return;
+
+  // Restore source text into each element so mermaid can re-render with new theme colors
+  const toRender = [];
+  mermaidElements.forEach((el, index) => {
+    const src = el.dataset.mermaidSrc;
+    if (!src) return;
+    el.textContent = src;
+    el.removeAttribute('data-processed');
+    el.id = `mermaid-${Date.now()}-${index}`;
+    toRender.push(el);
+  });
+
+  if (toRender.length === 0) return;
+
+  try {
+    await mermaid.run({ nodes: toRender, suppressErrors: false });
+    toRender.forEach(el => {
+      if (el.dataset.mermaidSrc && el.querySelector('svg')) {
+        mermaidSvgCache.set(el.dataset.mermaidSrc, el.innerHTML);
+      }
+    });
+  } catch (e) {
+    console.warn('Mermaid theme update failed, falling back to full re-render:', e);
+    if (originalMarkdown) renderMarkdown(getActiveMarkdown());
   }
 }
 
@@ -2433,12 +2500,16 @@ async function googleTranslate(text, targetLang) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Translation API error: ${response.status}`);
   const data = await response.json();
-  return data[0].map(s => s[0]).join('');
+  const segments = data[0];
+  if (!segments || !Array.isArray(segments)) return text; // API returned unexpected format
+  return segments.map(s => (s && s[0]) || '').join('');
 }
 
-// Parallel batch translator — sends up to CONCURRENCY requests at once
+// Parallel batch translator — sends up to CONCURRENCY requests at once.
+// Per-piece fallback: if a single piece fails, it stays in the original language
+// rather than failing the entire translation.
 async function batchGoogleTranslate(pieces, targetLang) {
-  const CONCURRENCY = 8;
+  const CONCURRENCY = 6;
   const results = new Array(pieces.length);
 
   const todo = [];
@@ -2453,7 +2524,12 @@ async function batchGoogleTranslate(pieces, targetLang) {
   for (let start = 0; start < todo.length; start += CONCURRENCY) {
     const batch = todo.slice(start, start + CONCURRENCY);
     await Promise.all(batch.map(async (i) => {
-      results[i] = await googleTranslate(pieces[i], targetLang);
+      try {
+        results[i] = await googleTranslate(pieces[i], targetLang);
+      } catch (e) {
+        console.warn('Piece translation failed, keeping original:', pieces[i]?.substring(0, 40), e.message);
+        results[i] = pieces[i]; // fallback: keep original text for this piece
+      }
     }));
   }
 
@@ -3643,6 +3719,7 @@ const findNoteClose = document.getElementById('findNoteClose');
 let savedSelection = null;
 let savedSelectionHtml = null;
 let savedSelectionOccurrence = 0;
+let savedRange = null;
 let rightClickTarget = null;
 let pendingSliderImageAdd = false; // flag: image dialog opened by "Add to Slider", not "Insert Image"
 let rightClickY = 0;
@@ -3662,6 +3739,7 @@ function showContextMenu(x, y) {
 
     // Save HTML version
     const range = selection.getRangeAt(0);
+    savedRange = range.cloneRange();
     const tempDiv = document.createElement('div');
     tempDiv.appendChild(range.cloneContents());
     savedSelectionHtml = tempDiv.innerHTML;
@@ -3686,6 +3764,7 @@ function showContextMenu(x, y) {
     savedSelection = null;
     savedSelectionHtml = null;
     savedSelectionOccurrence = 0;
+    savedRange = null;
   }
 
   // Enable/disable copy items based on selection
@@ -3942,7 +4021,7 @@ function applyMarkdownFormat(wrapper, multiline = false) {
       renderMarkdown(markdownEditor.value);
     }, PREVIEW_DEBOUNCE_DELAY);
   } else {
-    // View mode: Apply formatting to active markdown and re-render
+    // View mode: Apply formatting to active markdown
     const markdownContent = getActiveMarkdown();
 
     // Find the correct occurrence of selected text in markdown
@@ -3958,8 +4037,7 @@ function applyMarkdownFormat(wrapper, multiline = false) {
         formattedText +
         markdownContent.substring(textIndex + savedSelection.length);
 
-      // Update both markdowns
-      commitViewModeEdit(newContent, scrollPosition, () => {
+      const syncFn = () => {
         // Sync formatting to originalMarkdown
         const origText = findOriginalForTranslated(savedSelection);
         if (origText) {
@@ -3970,13 +4048,22 @@ function applyMarkdownFormat(wrapper, multiline = false) {
               const lines = origText.split('\n');
               origFormatted = lines.map(line => line.trim() ? '- ' + line : line).join('\n');
             } else {
-              const wrapper = formattedText.substring(0, formattedText.indexOf(savedSelection));
-              origFormatted = wrapper + origText + wrapper;
+              const w = formattedText.substring(0, formattedText.indexOf(savedSelection));
+              origFormatted = w + origText + w;
             }
             originalMarkdown = originalMarkdown.substring(0, oi) + origFormatted + originalMarkdown.substring(oi + origText.length);
           }
         }
-      });
+      };
+
+      // For inline formats (bold/italic), try direct DOM patch to avoid full re-render
+      const domTagMap = { '**': 'strong', '*': 'em' };
+      const domTag = !multiline ? domTagMap[wrapper] : null;
+      if (domTag && patchInlineFormatInDOM(domTag)) {
+        updateSourceSilently(newContent, syncFn);
+      } else {
+        commitViewModeEdit(newContent, scrollPosition, syncFn);
+      }
     } else {
       showNotification(i18n('notif.textNotFound'), 2000);
     }
@@ -4045,7 +4132,7 @@ ctxCode.addEventListener('click', () => {
 
     showNotification(i18n('notif.codeApplied'), 1500);
   } else {
-    // View mode: Apply formatting to active markdown and re-render
+    // View mode: Apply formatting to active markdown
     const markdownContent = getActiveMarkdown();
     const textIndex = findNthOccurrence(markdownContent, savedSelection, savedSelectionOccurrence);
 
@@ -4056,7 +4143,7 @@ ctxCode.addEventListener('click', () => {
         formattedText +
         markdownContent.substring(textIndex + savedSelection.length);
 
-      commitViewModeEdit(newContent, scrollPosition, () => {
+      const syncFn = () => {
         const origText = findOriginalForTranslated(savedSelection);
         if (origText) {
           const oi = findNthOccurrence(originalMarkdown, origText, savedSelectionOccurrence);
@@ -4066,7 +4153,14 @@ ctxCode.addEventListener('click', () => {
             originalMarkdown = originalMarkdown.substring(0, oi) + origFmt + originalMarkdown.substring(oi + origText.length);
           }
         }
-      });
+      };
+
+      // For single-line (inline) code, try direct DOM patch to avoid full re-render
+      if (!isMultiline && patchInlineFormatInDOM('code')) {
+        updateSourceSilently(newContent, syncFn);
+      } else {
+        commitViewModeEdit(newContent, scrollPosition, syncFn);
+      }
 
       showNotification(i18n('notif.codeApplied'), 1500);
     } else {
@@ -4165,7 +4259,7 @@ ctxRemoveFormat.addEventListener('click', () => {
         plainText +
         markdownContent.substring(foundIndex + foundPattern.length);
 
-      commitViewModeEdit(newContent, scrollPosition, () => {
+      const syncFn = () => {
         // Sync to originalMarkdown: remove formatting of corresponding original text
         const origText = findOriginalForTranslated(plainText);
         if (origText) {
@@ -4178,7 +4272,14 @@ ctxRemoveFormat.addEventListener('click', () => {
             }
           }
         }
-      });
+      };
+
+      // Try direct DOM patch to avoid full re-render
+      if (patchRemoveFormatInDOM()) {
+        updateSourceSilently(newContent, syncFn);
+      } else {
+        commitViewModeEdit(newContent, scrollPosition, syncFn);
+      }
 
       showNotification(i18n('notif.formatRemoved'), 1500);
     } else {
