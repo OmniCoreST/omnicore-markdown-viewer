@@ -5515,6 +5515,8 @@ ctxDeleteImage.addEventListener('click', () => {
 
 const ctxInsertMermaid = document.getElementById('ctxInsertMermaid');
 const ctxInsertTable = document.getElementById('ctxInsertTable');
+const ctxEditMermaid = document.getElementById('ctxEditMermaid');
+const ctxEditTable = document.getElementById('ctxEditTable');
 const ctxDeleteMermaid = document.getElementById('ctxDeleteMermaid');
 const ctxDeleteTable = document.getElementById('ctxDeleteTable');
 const ctxCopyCode = document.getElementById('ctxCopyCode');
@@ -5688,6 +5690,44 @@ ctxInsertTable && ctxInsertTable.addEventListener('click', () => {
   openTableInsertDialog();
 });
 
+// Edit Mermaid — open dialog prefilled with existing code
+ctxEditMermaid && ctxEditMermaid.addEventListener('click', () => {
+  hideContextMenu();
+  const mermaidEl = rightClickTarget?.closest('.mermaid-container')?.querySelector('.mermaid')
+    || rightClickTarget?.closest('.mermaid');
+  if (!mermaidEl) return;
+  editingMermaidContainer = mermaidEl.closest('.mermaid-container') || mermaidEl.parentElement;
+  openMermaidTemplateDialog(mermaidEl.dataset.mermaidSrc?.trim() || '', 'edit');
+});
+
+// Edit Table — open dialog prefilled with the matched markdown source
+ctxEditTable && ctxEditTable.addEventListener('click', () => {
+  hideContextMenu();
+  const tableEl = rightClickTarget?.closest('table');
+  if (!tableEl) return;
+  editingTableEl = tableEl;
+
+  const content = isEditMode ? markdownEditor.value : originalMarkdown;
+  const headers = [...tableEl.querySelectorAll('th')].map(th => th.textContent.trim());
+  const cellTexts = [...tableEl.querySelectorAll('td')].map(td => td.textContent.trim());
+
+  const tableRegex = /(\|[^\n]+\|[ \t]*\n)+\|[^\n]+\|[ \t]*(?:\n|$)/g;
+  let m;
+  let bestMatchText = null;
+  let bestScore = -1;
+
+  while ((m = tableRegex.exec(content)) !== null) {
+    const tableText = m[0];
+    const firstLine = tableText.split('\n').filter(l => l.trim())[0] || '';
+    let score = 0;
+    for (const h of headers) { if (firstLine.includes(h)) score += 2; }
+    for (const c of cellTexts.slice(0, 6)) { if (tableText.includes(c)) score++; }
+    if (score > bestScore) { bestScore = score; bestMatchText = tableText; }
+  }
+
+  openTableInsertDialog(bestMatchText || '', 'edit');
+});
+
 // Delete Mermaid — remove mermaid block from source
 ctxDeleteMermaid && ctxDeleteMermaid.addEventListener('click', () => {
   hideContextMenu();
@@ -5710,10 +5750,16 @@ ctxDeleteMermaid && ctxDeleteMermaid.addEventListener('click', () => {
   deleteMermaidFromSource(svgTexts, mermaidEl);
 });
 
+// Normalize line endings and trim for reliable mermaid source comparison
+function normalizeMermaidCode(s) {
+  return (s || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+}
+
 function deleteMermaidFromSource(svgTexts, mermaidEl) {
-  const content = originalMarkdown;
+  const content = isEditMode ? markdownEditor.value : originalMarkdown;
   const blocks = [];
-  const mermaidBlockRegex = /```mermaid[\r\n]([\s\S]*?)```/g;
+  // Allow optional spaces/tabs before the newline after ```mermaid, and one or more newlines
+  const mermaidBlockRegex = /```mermaid[^\S\r\n]*[\r\n]+([\s\S]*?)```/g;
   let m;
   while ((m = mermaidBlockRegex.exec(content)) !== null) {
     blocks.push({ start: m.index, end: m.index + m[0].length, code: m[1] });
@@ -5728,10 +5774,10 @@ function deleteMermaidFromSource(svgTexts, mermaidEl) {
   if (blocks.length === 1) {
     bestBlock = blocks[0];
   } else {
-    // Priority 1: match via data-mermaid-src attribute (exact source code stored at render time)
-    const srcCode = mermaidEl?.dataset?.mermaidSrc?.trim();
+    // Priority 1: match via data-mermaid-src (normalize line endings before comparing)
+    const srcCode = normalizeMermaidCode(mermaidEl?.dataset?.mermaidSrc);
     if (srcCode) {
-      bestBlock = blocks.find(b => b.code.trim() === srcCode) || null;
+      bestBlock = blocks.find(b => normalizeMermaidCode(b.code) === srcCode) || null;
     }
 
     // Priority 2: text-sample scoring (SVG text nodes vs source code)
@@ -5769,8 +5815,14 @@ function deleteMermaidFromSource(svgTexts, mermaidEl) {
   if (removeStart > 0 && content[removeStart - 1] === '\n') removeStart--;
   if (removeEnd < content.length && content[removeEnd] === '\n') removeEnd++;
 
+  const newContent = content.substring(0, removeStart) + content.substring(removeEnd);
   historyPush(originalMarkdown);
-  originalMarkdown = content.substring(0, removeStart) + content.substring(removeEnd);
+  originalMarkdown = isEditMode ? originalMarkdown : newContent;
+  if (isEditMode) {
+    markdownEditor.value = newContent;
+    hasUnsavedChanges = true;
+    updateUnsavedIndicator();
+  }
   invalidateTranslationCache();
   syncEditorWithStore();
   showNotification('Mermaid diagram deleted', 1500);
@@ -5803,7 +5855,7 @@ ctxDeleteTable && ctxDeleteTable.addEventListener('click', () => {
 });
 
 function deleteTableFromSource(tableEl, headers, cellTexts = []) {
-  const content = originalMarkdown;
+  const content = isEditMode ? markdownEditor.value : originalMarkdown;
   // Match markdown table rows: lines starting with | (last \n optional for end-of-file)
   const tableRegex = /(\|[^\n]+\|[ \t]*\n)+\|[^\n]+\|[ \t]*(?:\n|$)/g;
   let m;
@@ -5832,9 +5884,12 @@ function deleteTableFromSource(tableEl, headers, cellTexts = []) {
     return;
   }
 
-  // Remove from DOM directly (no full re-render)
-  if (tableEl && tableEl.parentElement) {
-    tableEl.parentElement.removeChild(tableEl);
+  // Remove from DOM directly — remove the .table-container wrapper if present, not just the <table>
+  const tableContainerToRemove = tableEl.parentElement?.classList.contains('table-container')
+    ? tableEl.parentElement
+    : tableEl;
+  if (tableContainerToRemove.parentElement) {
+    tableContainerToRemove.parentElement.removeChild(tableContainerToRemove);
   }
 
   // Update source
@@ -5843,8 +5898,14 @@ function deleteTableFromSource(tableEl, headers, cellTexts = []) {
   if (removeStart > 0 && content[removeStart - 1] === '\n') removeStart--;
   if (removeEnd < content.length && content[removeEnd] === '\n') removeEnd++;
 
+  const newTableContent = content.substring(0, removeStart) + content.substring(removeEnd);
   historyPush(originalMarkdown);
-  originalMarkdown = content.substring(0, removeStart) + content.substring(removeEnd);
+  originalMarkdown = isEditMode ? originalMarkdown : newTableContent;
+  if (isEditMode) {
+    markdownEditor.value = newTableContent;
+    hasUnsavedChanges = true;
+    updateUnsavedIndicator();
+  }
   invalidateTranslationCache();
   syncEditorWithStore();
   showNotification('Table deleted', 1500);
@@ -5862,6 +5923,8 @@ function updateNewContextMenuItems() {
   const isCode = !!(target.closest?.('pre') || target.closest?.('code'));
   const isImg = target.tagName === 'IMG' || !!target.closest?.('img');
 
+  ctxEditMermaid && (ctxEditMermaid.style.display = isMermaid ? '' : 'none');
+  ctxEditTable && (ctxEditTable.style.display = isTable ? '' : 'none');
   ctxDeleteMermaid && (ctxDeleteMermaid.style.display = isMermaid ? '' : 'none');
   ctxDeleteTable && (ctxDeleteTable.style.display = isTable ? '' : 'none');
   ctxCopyCode && (ctxCopyCode.style.display = isCode ? '' : 'none');
@@ -5874,8 +5937,128 @@ function updateNewContextMenuItems() {
 }
 
 // ============================================
+// DOM PATCH HELPERS
+// ============================================
+
+// Returns the direct child of viewer at the right-click Y position (mirrors getBlockInsertPosition logic)
+function getDomInsertAnchor() {
+  const children = Array.from(viewer.children);
+  if (children.length === 0) return null;
+  let targetIndex = children.length - 1;
+  for (let i = 0; i < children.length; i++) {
+    if (children[i].getBoundingClientRect().bottom >= rightClickY) {
+      targetIndex = i;
+      break;
+    }
+  }
+  return children[targetIndex] || null;
+}
+
+// Render a mermaid diagram directly into the DOM without a full page re-render.
+// mode='insert': inserts after the right-click anchor child of viewer
+// mode='replace': replaces replaceTarget (a .mermaid-container element)
+async function renderMermaidInDOM(code, mode, replaceTarget) {
+  const mermaidEl = document.createElement('div');
+  mermaidEl.className = 'mermaid';
+  mermaidEl.textContent = code;
+  mermaidEl.dataset.mermaidSrc = code;
+  mermaidEl.id = `mermaid-${Date.now()}-patch`;
+
+  const container = document.createElement('div');
+  container.className = 'mermaid-container';
+  container.appendChild(mermaidEl);
+
+  const maxBtn = document.createElement('button');
+  maxBtn.className = 'mermaid-maximize-btn';
+  maxBtn.title = 'Open in new window';
+  maxBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+  </svg>`;
+  maxBtn.addEventListener('click', () => {
+    const svg = mermaidEl.querySelector('svg');
+    if (svg) {
+      ipcRenderer.send('open-mermaid-popup', { svgContent: svg.outerHTML, isDarkMode: document.body.classList.contains('dark-mode') });
+    }
+  });
+  container.appendChild(maxBtn);
+
+  if (mode === 'replace') {
+    replaceTarget.parentElement.replaceChild(container, replaceTarget);
+  } else {
+    const anchor = getDomInsertAnchor();
+    if (anchor && anchor.parentElement === viewer) {
+      viewer.insertBefore(container, anchor.nextSibling);
+    } else {
+      viewer.appendChild(container);
+    }
+  }
+
+  try {
+    await mermaid.run({ nodes: [mermaidEl], suppressErrors: false });
+    if (mermaidEl.querySelector('svg')) {
+      mermaidSvgCache.set(code, mermaidEl.innerHTML);
+    }
+  } catch (err) {
+    mermaidEl.innerHTML = `<div style="color:red;padding:20px;background:#ffe6e6;border:1px solid #ff0000;border-radius:4px;">
+      <strong>Mermaid Rendering Error:</strong><br>${err.message}
+    </div>`;
+  }
+}
+
+// Render a markdown table directly into the DOM without a full page re-render.
+// mode='insert': inserts after the right-click anchor child of viewer
+// mode='replace': replaces replaceTarget (<table> element, parent .table-container used if present)
+function renderTableInDOM(mdTable, mode, replaceTarget) {
+  const html = DOMPurify.sanitize(marked.parse(mdTable));
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = html;
+  const tableEl = tempDiv.querySelector('table');
+  if (!tableEl) return;
+
+  const firstRow = tableEl.querySelector('thead tr, tr:first-child');
+  if (firstRow && firstRow.querySelectorAll('th, td').length > 5) {
+    tableEl.classList.add('compact-table');
+  }
+
+  const container = document.createElement('div');
+  container.className = 'table-container';
+  container.appendChild(tableEl);
+
+  const maxBtn = document.createElement('button');
+  maxBtn.className = 'table-maximize-btn';
+  maxBtn.title = 'Open in interactive popup';
+  maxBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+  </svg>`;
+  maxBtn.addEventListener('click', () => {
+    ipcRenderer.send('open-table-popup', { tableData: extractTableData(tableEl), isDarkMode: document.body.classList.contains('dark-mode') });
+  });
+  container.appendChild(maxBtn);
+
+  if (mode === 'replace') {
+    const replaceEl = replaceTarget.parentElement?.classList.contains('table-container')
+      ? replaceTarget.parentElement
+      : replaceTarget;
+    if (replaceEl.parentElement) replaceEl.parentElement.replaceChild(container, replaceEl);
+  } else {
+    const anchor = getDomInsertAnchor();
+    if (anchor && anchor.parentElement === viewer) {
+      viewer.insertBefore(container, anchor.nextSibling);
+    } else {
+      viewer.appendChild(container);
+    }
+  }
+}
+
+// ============================================
 // MERMAID TEMPLATE DIALOG
 // ============================================
+
+// Dialog mode state (shared between mermaid and table dialogs)
+let mermaidDialogMode = 'insert'; // 'insert' | 'edit'
+let editingMermaidContainer = null;
+let tableDialogMode = 'insert';   // 'insert' | 'edit'
+let editingTableEl = null;
 
 const MERMAID_TEMPLATES = {
   flowchart: `flowchart TD
@@ -5942,7 +6125,49 @@ const MERMAID_TEMPLATES = {
     commit
     checkout main
     merge develop
-    commit`
+    commit`,
+  timeline: `timeline
+    title Project Milestones
+    section Q1
+      January : Kickoff meeting
+      February : Requirements done
+    section Q2
+      March : Design approved
+      April : Development starts
+    section Q3
+      August : Beta release`,
+  mindmap: `mindmap
+  root((Project))
+    Planning
+      Requirements
+      Timeline
+      Budget
+    Development
+      Frontend
+      Backend
+      Database
+    Testing
+      Unit Tests
+      Integration
+      UAT`,
+  xychart: `xychart-beta
+  title "Quarterly Revenue"
+  x-axis [Q1, Q2, Q3, Q4]
+  y-axis "Revenue (M)" 0 --> 120
+  bar [45, 62, 78, 91]
+  line [45, 62, 78, 91]`,
+  quadrant: `quadrantChart
+  title Effort vs Impact
+  x-axis Low Effort --> High Effort
+  y-axis Low Impact --> High Impact
+  quadrant-1 Quick Wins
+  quadrant-2 Major Projects
+  quadrant-3 Fill Ins
+  quadrant-4 Thankless Tasks
+  Task A: [0.25, 0.75]
+  Task B: [0.65, 0.60]
+  Task C: [0.20, 0.30]
+  Task D: [0.75, 0.25]`
 };
 
 const mermaidTemplateOverlay = document.getElementById('mermaidTemplateOverlay');
@@ -5950,30 +6175,144 @@ const mermaidTemplateClose = document.getElementById('mermaidTemplateClose');
 const mermaidTemplateCancelBtn = document.getElementById('mermaidTemplateCancelBtn');
 const mermaidTemplateInsertBtn = document.getElementById('mermaidTemplateInsertBtn');
 const mermaidTemplateCode = document.getElementById('mermaidTemplateCode');
+const mermaidTemplatePreviewEl = document.getElementById('mermaidTemplatePreview');
 
-function openMermaidTemplateDialog() {
+let mermaidPreviewCounter = 0;
+let mermaidPreviewDebounce = null;
+
+async function updateMermaidPreview() {
+  if (!mermaidTemplatePreviewEl) return;
+  const code = mermaidTemplateCode ? mermaidTemplateCode.value.trim() : '';
+  if (!code) {
+    mermaidTemplatePreviewEl.innerHTML = '<span class="mermaid-preview-placeholder">Select a template to preview</span>';
+    return;
+  }
+  try {
+    const id = 'mermaid-tpl-prev-' + (++mermaidPreviewCounter);
+    const { svg } = await mermaid.render(id, code);
+    mermaidTemplatePreviewEl.innerHTML = svg;
+  } catch {
+    mermaidTemplatePreviewEl.innerHTML = '<span class="mermaid-preview-error">Invalid diagram syntax</span>';
+  }
+}
+
+function scheduleMermaidPreview() {
+  clearTimeout(mermaidPreviewDebounce);
+  mermaidPreviewDebounce = setTimeout(updateMermaidPreview, 400);
+}
+
+function openMermaidTemplateDialog(code = null, mode = 'insert') {
   if (!mermaidTemplateOverlay) return;
-  // Set default template
-  mermaidTemplateCode.value = MERMAID_TEMPLATES.flowchart;
-  // Highlight first button
+  mermaidDialogMode = mode;
+
+  if (code !== null) {
+    mermaidTemplateCode.value = code;
+  } else {
+    mermaidTemplateCode.value = MERMAID_TEMPLATES.flowchart;
+  }
+
+  if (mermaidTemplateInsertBtn) {
+    mermaidTemplateInsertBtn.textContent = mode === 'edit' ? 'Update (Ctrl+Enter)' : 'Insert (Ctrl+Enter)';
+  }
+
+  // Highlight flowchart button only for fresh inserts; clear for edit mode or pre-filled code
   mermaidTemplateOverlay.querySelectorAll('.mermaid-tpl-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tpl === 'flowchart');
+    btn.classList.toggle('active', mode === 'insert' && code === null && btn.dataset.tpl === 'flowchart');
   });
+
   mermaidTemplateOverlay.classList.add('visible');
   mermaidTemplateCode.focus();
+  updateMermaidPreview();
 }
 
 function closeMermaidTemplateDialog() {
   mermaidTemplateOverlay && mermaidTemplateOverlay.classList.remove('visible');
 }
 
-function insertMermaidFromDialog() {
+async function insertMermaidFromDialog() {
   const code = mermaidTemplateCode.value.trim();
   if (!code) return;
   closeMermaidTemplateDialog();
 
-  const mermaidBlock = '\n```mermaid\n' + code + '\n```\n';
-  insertContentAtCursor(mermaidBlock);
+  // Capture and reset state immediately so re-entrant calls are safe
+  const mode = mermaidDialogMode;
+  const editTarget = editingMermaidContainer;
+  mermaidDialogMode = 'insert';
+  editingMermaidContainer = null;
+
+  if (mode === 'edit') {
+    if (!editTarget) return;
+
+    const mermaidEl = editTarget.querySelector('.mermaid');
+    const oldCode = mermaidEl?.dataset?.mermaidSrc?.trim() || '';
+    const content = isEditMode ? markdownEditor.value : originalMarkdown;
+
+    // Replace the matching mermaid block in source (normalize line endings for robust matching)
+    let newContent = content;
+    if (oldCode) {
+      const normalOld = normalizeMermaidCode(oldCode);
+      const mermaidBlockRegex = /```mermaid[^\S\r\n]*[\r\n]+([\s\S]*?)```/g;
+      let m;
+      while ((m = mermaidBlockRegex.exec(content)) !== null) {
+        if (normalizeMermaidCode(m[1]) === normalOld) {
+          newContent = content.substring(0, m.index) + '```mermaid\n' + code + '\n```' + content.substring(m.index + m[0].length);
+          break;
+        }
+      }
+    }
+
+    historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
+
+    if (isEditMode) {
+      markdownEditor.value = newContent;
+      hasUnsavedChanges = true;
+      updateUnsavedIndicator();
+    } else {
+      originalMarkdown = newContent;
+      invalidateTranslationCache();
+      hasUnsavedChanges = true;
+    }
+    syncEditorWithStore();
+
+    await renderMermaidInDOM(code, 'replace', editTarget);
+    showNotification('Mermaid updated', 1500);
+
+  } else {
+    // INSERT mode
+    const mermaidBlock = '\n```mermaid\n' + code + '\n```\n';
+    historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
+
+    if (isEditMode) {
+      const cursorPos = savedCursorPosition !== null ? savedCursorPosition : markdownEditor.selectionStart;
+      const safePos = skipPastCodeBlock(markdownEditor.value, cursorPos);
+      const before = markdownEditor.value.substring(0, safePos);
+      const after = markdownEditor.value.substring(safePos);
+      markdownEditor.value = before + mermaidBlock + after;
+      const newCursor = safePos + mermaidBlock.length;
+      markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
+      markdownEditor.focus();
+      hasUnsavedChanges = true;
+      updateUnsavedIndicator();
+      clearTimeout(previewDebounceTimer);
+      previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
+      showNotification('Mermaid inserted', 1000);
+    } else {
+      // View mode: DOM patch, no full re-render
+      const activeContent = getActiveMarkdown();
+      const insertPos = skipPastCodeBlock(activeContent, getBlockInsertPosition());
+      const before = activeContent.substring(0, insertPos);
+      const after = activeContent.substring(insertPos);
+      const newContent = before + mermaidBlock + after;
+
+      originalMarkdown = newContent;
+      invalidateTranslationCache();
+      hasUnsavedChanges = true;
+      syncEditorWithStore();
+
+      await renderMermaidInDOM(code, 'insert');
+      showNotification('Mermaid inserted', 1000);
+    }
+  }
 }
 
 mermaidTemplateOverlay && mermaidTemplateOverlay.querySelectorAll('.mermaid-tpl-btn').forEach(btn => {
@@ -5982,8 +6321,11 @@ mermaidTemplateOverlay && mermaidTemplateOverlay.querySelectorAll('.mermaid-tpl-
     if (tpl) mermaidTemplateCode.value = tpl;
     mermaidTemplateOverlay.querySelectorAll('.mermaid-tpl-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    updateMermaidPreview();
   });
 });
+
+mermaidTemplateCode && mermaidTemplateCode.addEventListener('input', scheduleMermaidPreview);
 
 mermaidTemplateClose && mermaidTemplateClose.addEventListener('click', closeMermaidTemplateDialog);
 mermaidTemplateCancelBtn && mermaidTemplateCancelBtn.addEventListener('click', closeMermaidTemplateDialog);
@@ -6041,9 +6383,24 @@ function updateTablePreview() {
   }
 }
 
-function openTableInsertDialog() {
+function openTableInsertDialog(md = null, mode = 'insert') {
   if (!tableInsertOverlay) return;
-  updateTablePreview();
+  tableDialogMode = mode;
+
+  if (md !== null && mode === 'edit') {
+    // Pre-fill the markdown textarea and render preview directly
+    if (tableInsertMarkdownEl) tableInsertMarkdownEl.value = md.trim();
+    if (tableInsertPreviewEl) {
+      tableInsertPreviewEl.innerHTML = DOMPurify.sanitize(marked.parse(md.trim()));
+    }
+  } else {
+    updateTablePreview();
+  }
+
+  if (tableInsertBtn) {
+    tableInsertBtn.textContent = mode === 'edit' ? 'Update' : 'Insert';
+  }
+
   tableInsertOverlay.classList.add('visible');
 }
 
@@ -6051,18 +6408,112 @@ function closeTableInsertDialog() {
   tableInsertOverlay && tableInsertOverlay.classList.remove('visible');
 }
 
+function getCleanTableMarkdown() {
+  const raw = tableInsertMarkdownEl ? tableInsertMarkdownEl.value : '';
+  return raw.split('\n').map(l => l.trim()).join('\n');
+}
+
 function insertTableFromDialog() {
-  const rows = Math.max(1, parseInt(tableInsertRowsEl?.value) || 3);
-  const cols = Math.max(1, parseInt(tableInsertColsEl?.value) || 3);
-  const hasHeader = tableInsertHeaderEl ? tableInsertHeaderEl.checked : true;
-  const md = buildTableMarkdown(rows, cols, hasHeader);
+  const md = getCleanTableMarkdown();
+  if (!md) return;
   closeTableInsertDialog();
-  insertContentAtCursor('\n' + md + '\n');
+
+  // Capture and reset state immediately
+  const mode = tableDialogMode;
+  const editTarget = editingTableEl;
+  tableDialogMode = 'insert';
+  editingTableEl = null;
+
+  if (mode === 'edit') {
+    if (!editTarget) return;
+
+    const content = isEditMode ? markdownEditor.value : originalMarkdown;
+    const headers = [...editTarget.querySelectorAll('th')].map(th => th.textContent.trim());
+    const cellTexts = [...editTarget.querySelectorAll('td')].map(td => td.textContent.trim());
+
+    // Find the best-matching table block in source (same scoring as deleteTableFromSource)
+    const tableRegex = /(\|[^\n]+\|[ \t]*\n)+\|[^\n]+\|[ \t]*(?:\n|$)/g;
+    let m;
+    let bestStart = -1;
+    let bestEnd = -1;
+    let bestScore = -1;
+
+    while ((m = tableRegex.exec(content)) !== null) {
+      const tableText = m[0];
+      const firstLine = tableText.split('\n').filter(l => l.trim())[0] || '';
+      let score = 0;
+      for (const h of headers) { if (firstLine.includes(h)) score += 2; }
+      for (const c of cellTexts.slice(0, 6)) { if (tableText.includes(c)) score++; }
+      if (score > bestScore) { bestScore = score; bestStart = m.index; bestEnd = m.index + m[0].length; }
+    }
+
+    let newContent = content;
+    if (bestStart !== -1) {
+      newContent = content.substring(0, bestStart) + md + content.substring(bestEnd);
+    }
+
+    historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
+
+    if (isEditMode) {
+      markdownEditor.value = newContent;
+      hasUnsavedChanges = true;
+      updateUnsavedIndicator();
+    } else {
+      originalMarkdown = newContent;
+      invalidateTranslationCache();
+      hasUnsavedChanges = true;
+    }
+    syncEditorWithStore();
+
+    renderTableInDOM(md, 'replace', editTarget);
+    showNotification('Table updated', 1500);
+
+  } else {
+    // INSERT mode
+    historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
+
+    if (isEditMode) {
+      const cursorPos = savedCursorPosition !== null ? savedCursorPosition : markdownEditor.selectionStart;
+      const safePos = skipPastCodeBlock(markdownEditor.value, cursorPos);
+      const before = markdownEditor.value.substring(0, safePos);
+      const after = markdownEditor.value.substring(safePos);
+      markdownEditor.value = before + '\n' + md + '\n' + after;
+      const newCursor = safePos + md.length + 2;
+      markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
+      markdownEditor.focus();
+      hasUnsavedChanges = true;
+      updateUnsavedIndicator();
+      clearTimeout(previewDebounceTimer);
+      previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
+      showNotification('Table inserted', 1000);
+    } else {
+      // View mode: DOM patch, no full re-render
+      const activeContent = getActiveMarkdown();
+      const insertPos = skipPastCodeBlock(activeContent, getBlockInsertPosition());
+      const before = activeContent.substring(0, insertPos);
+      const after = activeContent.substring(insertPos);
+      const newContent = before + '\n' + md + '\n' + after;
+
+      originalMarkdown = newContent;
+      invalidateTranslationCache();
+      hasUnsavedChanges = true;
+      syncEditorWithStore();
+
+      renderTableInDOM(md, 'insert');
+      showNotification('Table inserted', 1000);
+    }
+  }
 }
 
 tableInsertRowsEl && tableInsertRowsEl.addEventListener('input', updateTablePreview);
 tableInsertColsEl && tableInsertColsEl.addEventListener('input', updateTablePreview);
 tableInsertHeaderEl && tableInsertHeaderEl.addEventListener('change', updateTablePreview);
+tableInsertMarkdownEl && tableInsertMarkdownEl.addEventListener('input', () => {
+  if (tableInsertPreviewEl) {
+    const md = getCleanTableMarkdown();
+    tableInsertPreviewEl.innerHTML = DOMPurify.sanitize(marked.parse(md));
+  }
+});
 tableInsertClose && tableInsertClose.addEventListener('click', closeTableInsertDialog);
 tableInsertCancelBtn && tableInsertCancelBtn.addEventListener('click', closeTableInsertDialog);
 tableInsertBtn && tableInsertBtn.addEventListener('click', insertTableFromDialog);

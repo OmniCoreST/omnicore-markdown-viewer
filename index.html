@@ -536,12 +536,26 @@
       </svg>
       <span>Insert Table</span>
     </div>
+    <div class="context-menu-item" id="ctxEditMermaid" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+      </svg>
+      <span>Edit Mermaid</span>
+    </div>
     <div class="context-menu-item" id="ctxDeleteMermaid" style="display:none;">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="3 6 5 6 21 6"></polyline>
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
       </svg>
       <span>Delete Mermaid</span>
+    </div>
+    <div class="context-menu-item" id="ctxEditTable" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+      </svg>
+      <span>Edit Table</span>
     </div>
     <div class="context-menu-item" id="ctxDeleteTable" style="display:none;">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -705,9 +719,21 @@
           <button class="mermaid-tpl-btn" data-tpl="gantt">Gantt</button>
           <button class="mermaid-tpl-btn" data-tpl="pie">Pie Chart</button>
           <button class="mermaid-tpl-btn" data-tpl="gitgraph">Git Graph</button>
+          <button class="mermaid-tpl-btn" data-tpl="timeline">Timeline</button>
+          <button class="mermaid-tpl-btn" data-tpl="mindmap">Mind Map</button>
+          <button class="mermaid-tpl-btn" data-tpl="xychart">XY Chart</button>
+          <button class="mermaid-tpl-btn" data-tpl="quadrant">Quadrant</button>
         </div>
-        <label class="note-dialog-label">Edit / Preview Code</label>
-        <textarea id="mermaidTemplateCode" class="note-dialog-textarea mermaid-template-code" rows="10" placeholder="Select a template above or type mermaid code..."></textarea>
+        <div class="mermaid-template-split">
+          <div class="mermaid-template-editor">
+            <label class="note-dialog-label">Code</label>
+            <textarea id="mermaidTemplateCode" class="note-dialog-textarea mermaid-template-code" rows="10" placeholder="Select a template above or type mermaid code..."></textarea>
+          </div>
+          <div class="mermaid-template-preview-col">
+            <label class="note-dialog-label">Preview</label>
+            <div id="mermaidTemplatePreview" class="mermaid-template-preview"><span class="mermaid-preview-placeholder">Select a template to preview</span></div>
+          </div>
+        </div>
       </div>
       <div class="note-dialog-footer">
         <button id="mermaidTemplateInsertBtn" class="note-dialog-btn primary">Insert (Ctrl+Enter)</button>
@@ -738,7 +764,7 @@
         <label class="note-dialog-label">Preview</label>
         <div id="tableInsertPreview" class="table-insert-preview"></div>
         <label class="note-dialog-label" style="margin-top:10px;">Markdown</label>
-        <textarea id="tableInsertMarkdown" class="note-dialog-textarea" rows="6" readonly></textarea>
+        <textarea id="tableInsertMarkdown" class="note-dialog-textarea" rows="6"></textarea>
       </div>
       <div class="note-dialog-footer">
         <button id="tableInsertBtn" class="note-dialog-btn primary">Insert</button>
