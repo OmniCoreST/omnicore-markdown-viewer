@@ -775,7 +775,7 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
 /* Welcome screen */
 .welcome {
   text-align: center;
-  padding: 40px 20px 20px;
+  padding: 48px 32px 32px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -784,25 +784,25 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
 
 .welcome h1 {
   margin-bottom: 10px;
-  font-size: 26px;
+  font-size: 30px;
 }
 
 .welcome > p {
   margin-bottom: 0;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 15px;
 }
 
 /* Feature slider */
 .welcome-feature-slider {
-  margin: 28px auto 0;
+  margin: 36px auto 0;
   width: 100%;
-  max-width: 440px;
+  max-width: 580px;
 }
 
 .welcome-slides-track {
   position: relative;
-  height: 170px;
+  height: 230px;
 }
 
 .welcome-slide {
@@ -812,12 +812,12 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 20px 28px;
+  gap: 14px;
+  padding: 28px 44px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 14px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  border-radius: 16px;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.07);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.45s ease;
@@ -835,28 +835,28 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
 
 .welcome-slide-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .welcome-slide-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .welcome-dots {
   display: flex;
   justify-content: center;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 .welcome-dot {
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--border-color);
   cursor: pointer;
@@ -865,26 +865,21 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
 
 .welcome-dot.active {
   background: #279EA7;
-  transform: scale(1.3);
+  transform: scale(1.35);
 }
 
-/* Welcome footer with version badge */
-.welcome-footer {
-  width: 100%;
-  max-width: 440px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  margin-top: 18px;
-  padding: 0 2px;
-}
-
+/* Version badge — fixed at bottom-left corner of the app window */
 .welcome-version {
-  font-size: 11px;
+  position: fixed;
+  bottom: 14px;
+  left: 16px;
+  font-size: 11.5px;
   color: var(--text-secondary);
-  opacity: 0.55;
+  opacity: 0.5;
   font-family: 'Fira Code', monospace, sans-serif;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* Dark mode icon stroke override */
