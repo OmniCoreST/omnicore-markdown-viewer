@@ -170,6 +170,8 @@ const UI_STRINGS = {
     'update.versionReady': 'Version ${version} is ready to download',
     'update.versionInstall': 'Version ${version} is ready to install',
     'update.failed': 'Failed to check for updates',
+    'update.download': 'Download',
+    'update.openDownloadPage': 'Open Download Page',
     'search.counter': '${current} of ${total}',
     'search.zero': '0 of 0',
     'mermaid.error': 'Could not convert diagram to image.',
@@ -291,6 +293,8 @@ const UI_STRINGS = {
     'update.versionReady': 'Sürüm ${version} indirmeye hazır',
     'update.versionInstall': 'Sürüm ${version} kurulmaya hazır',
     'update.failed': 'Güncellemeler kontrol edilemedi',
+    'update.download': 'İndir',
+    'update.openDownloadPage': 'İndirme Sayfasını Aç',
     'search.counter': '${current} / ${total}',
     'search.zero': '0 / 0',
     'mermaid.error': 'Diyagram resme dönüştürülemedi.',
@@ -3580,6 +3584,7 @@ const laterUpdateBtn = document.getElementById('laterUpdateBtn');
 const closeUpdateToast = document.getElementById('closeUpdateToast');
 
 let pendingUpdateVersion = null;
+let pendingUpdateIsPortable = false;
 
 function showUpdateToast() {
   appUpdateToast.classList.add('show');
@@ -3600,10 +3605,13 @@ ipcRenderer.on('update-status', (event, data) => {
 
     case 'available':
       pendingUpdateVersion = data.version;
+      pendingUpdateIsPortable = !!data.portable;
       updateTitle.textContent = i18n('updateAvailable');
       updateMessage.textContent = i18n('update.versionReady', {version: data.version});
       updateProgress.style.display = 'none';
       downloadUpdateBtn.style.display = 'flex';
+      // Portable builds can't use in-app install — button label reflects this
+      downloadUpdateBtn.textContent = pendingUpdateIsPortable ? i18n('update.openDownloadPage') : i18n('update.download');
       installUpdateBtn.style.display = 'none';
       laterUpdateBtn.style.display = 'block';
       updateActions.style.display = 'flex';
@@ -3657,7 +3665,13 @@ ipcRenderer.on('update-status', (event, data) => {
 
 // Update button handlers
 downloadUpdateBtn.addEventListener('click', () => {
-  ipcRenderer.send('download-update');
+  if (pendingUpdateIsPortable) {
+    // Portable: can't auto-install — open releases page in browser
+    shell.openExternal('https://github.com/OmniCoreST/omnicore-markdown-viewer/releases/latest');
+    hideUpdateToast();
+  } else {
+    ipcRenderer.send('download-update');
+  }
 });
 
 installUpdateBtn.addEventListener('click', () => {
