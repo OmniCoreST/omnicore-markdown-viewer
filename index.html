@@ -105,6 +105,14 @@
                 </div>
               </div>
             </div>
+            <div class="tools-menu-item tools-toggle-item" id="corporateModeToggle" style="display:none;">
+              <span data-i18n="corporateMode">Corporate Mode</span>
+              <div class="tools-toggle-switch">
+                <div class="tools-toggle-track">
+                  <div class="tools-toggle-thumb"></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="tools-dropdown" id="toolsDropdown">
@@ -493,6 +501,63 @@
       </svg>
       <span data-i18n="ctx.deleteImage">Delete Image</span>
     </div>
+    <div class="context-menu-item" id="ctxCopyImageSrc" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+      <span>Copy Image Source</span>
+    </div>
+    <div class="context-menu-item" id="ctxAddToSlider" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+        <path d="M12 9v6M9 12h6"></path>
+      </svg>
+      <span>Add to Slider</span>
+    </div>
+    <div class="context-menu-separator"></div>
+    <div class="context-menu-item" id="ctxInsertMermaid">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="5" r="2"></circle>
+        <circle cx="5" cy="19" r="2"></circle>
+        <circle cx="19" cy="19" r="2"></circle>
+        <line x1="12" y1="7" x2="5" y2="17"></line>
+        <line x1="12" y1="7" x2="19" y2="17"></line>
+      </svg>
+      <span>Insert Mermaid</span>
+    </div>
+    <div class="context-menu-item" id="ctxInsertTable">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+        <line x1="3" y1="9" x2="21" y2="9"></line>
+        <line x1="3" y1="15" x2="21" y2="15"></line>
+        <line x1="9" y1="3" x2="9" y2="21"></line>
+        <line x1="15" y1="3" x2="15" y2="21"></line>
+      </svg>
+      <span>Insert Table</span>
+    </div>
+    <div class="context-menu-item" id="ctxDeleteMermaid" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+      </svg>
+      <span>Delete Mermaid</span>
+    </div>
+    <div class="context-menu-item" id="ctxDeleteTable" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        <rect x="3" y="3" width="18" height="8" rx="0"></rect>
+      </svg>
+      <span>Delete Table</span>
+    </div>
+    <div class="context-menu-item" id="ctxCopyCode" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="16 18 22 12 16 6"></polyline>
+        <polyline points="8 6 2 12 8 18"></polyline>
+      </svg>
+      <span>Copy Code</span>
+    </div>
     <div class="context-menu-separator"></div>
     <div class="context-menu-item" id="ctxSelectAll">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -621,6 +686,66 @@
 
   <!-- Note Tooltip -->
   <div id="noteTooltip" class="note-tooltip"></div>
+
+  <!-- Mermaid Template Dialog -->
+  <div id="mermaidTemplateOverlay" class="note-dialog-overlay">
+    <div class="note-dialog mermaid-template-dialog">
+      <div class="note-dialog-header">
+        <span>Insert Mermaid Diagram</span>
+        <button id="mermaidTemplateClose" class="close-btn">&times;</button>
+      </div>
+      <div class="note-dialog-body">
+        <label class="note-dialog-label">Template</label>
+        <div id="mermaidTemplateGrid" class="mermaid-template-grid">
+          <button class="mermaid-tpl-btn" data-tpl="flowchart">Flowchart</button>
+          <button class="mermaid-tpl-btn" data-tpl="sequence">Sequence</button>
+          <button class="mermaid-tpl-btn" data-tpl="class">Class</button>
+          <button class="mermaid-tpl-btn" data-tpl="state">State</button>
+          <button class="mermaid-tpl-btn" data-tpl="er">ER Diagram</button>
+          <button class="mermaid-tpl-btn" data-tpl="gantt">Gantt</button>
+          <button class="mermaid-tpl-btn" data-tpl="pie">Pie Chart</button>
+          <button class="mermaid-tpl-btn" data-tpl="gitgraph">Git Graph</button>
+        </div>
+        <label class="note-dialog-label">Edit / Preview Code</label>
+        <textarea id="mermaidTemplateCode" class="note-dialog-textarea mermaid-template-code" rows="10" placeholder="Select a template above or type mermaid code..."></textarea>
+      </div>
+      <div class="note-dialog-footer">
+        <button id="mermaidTemplateInsertBtn" class="note-dialog-btn primary">Insert (Ctrl+Enter)</button>
+        <button id="mermaidTemplateCancelBtn" class="note-dialog-btn secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table Insert Dialog -->
+  <div id="tableInsertOverlay" class="note-dialog-overlay">
+    <div class="note-dialog table-insert-dialog">
+      <div class="note-dialog-header">
+        <span>Insert Table</span>
+        <button id="tableInsertClose" class="close-btn">&times;</button>
+      </div>
+      <div class="note-dialog-body">
+        <div class="table-dialog-controls">
+          <label class="note-dialog-label">Rows
+            <input type="number" id="tableInsertRows" class="note-dialog-input table-num-input" value="3" min="1" max="30">
+          </label>
+          <label class="note-dialog-label">Columns
+            <input type="number" id="tableInsertCols" class="note-dialog-input table-num-input" value="3" min="1" max="15">
+          </label>
+          <label class="note-dialog-label table-header-label">
+            <input type="checkbox" id="tableInsertHeader" checked> Header Row
+          </label>
+        </div>
+        <label class="note-dialog-label">Preview</label>
+        <div id="tableInsertPreview" class="table-insert-preview"></div>
+        <label class="note-dialog-label" style="margin-top:10px;">Markdown</label>
+        <textarea id="tableInsertMarkdown" class="note-dialog-textarea" rows="6" readonly></textarea>
+      </div>
+      <div class="note-dialog-footer">
+        <button id="tableInsertBtn" class="note-dialog-btn primary">Insert</button>
+        <button id="tableInsertCancelBtn" class="note-dialog-btn secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <script src="renderer.js"></script>
 </body>

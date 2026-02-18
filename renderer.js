@@ -61,7 +61,8 @@ const UI_STRINGS = {
     'history': 'History', 'editMode': 'Edit Mode',
     'allNotes': 'All Notes', 'noNotes': 'No notes found',
     'view': 'View', 'title.view': 'View',
-    'tools': 'Tools', 'darkMode': 'Dark Mode', 'fullscreen': 'Fullscreen', 'showNotes': 'Show Notes',
+    'tools': 'Tools', 'darkMode': 'Dark Mode', 'corporateMode': 'Corporate Mode', 'fullscreen': 'Fullscreen', 'showNotes': 'Show Notes',
+    'corporateModeEnabled': 'Corporate letterhead enabled', 'corporateModeDisabled': 'Corporate letterhead disabled',
     'save': 'Save', 'reload': 'Reload', 'dismiss': 'Dismiss',
     'cancel': 'Cancel', 'find': 'Find', 'later': 'Later', 'exit': 'Exit',
     'title.open': 'Open File (Ctrl+O)', 'title.recent': 'Recent Files',
@@ -96,6 +97,7 @@ const UI_STRINGS = {
     'ctx.addNote': 'Add Note', 'ctx.editNote': 'Edit Note',
     'ctx.deleteNote': 'Delete Note', 'ctx.findNote': 'Find Note',
     'ctx.insertImage': 'Insert Image', 'ctx.deleteImage': 'Delete Image',
+    'ctx.addToSlider': 'Add to Slider',
     'ctx.selectAll': 'Select All',
     'ctx.openFolder': 'Open Containing Folder', 'ctx.copyPath': 'Copy Path',
     'ctx.removeRecent': 'Remove from Recent',
@@ -179,7 +181,8 @@ const UI_STRINGS = {
     'history': 'Geçmiş', 'editMode': 'Düzenleme Modu',
     'allNotes': 'Tüm Notlar', 'noNotes': 'Not bulunamadı',
     'view': 'Görünüm', 'title.view': 'Görünüm',
-    'tools': 'Araçlar', 'darkMode': 'Karanlık Mod', 'fullscreen': 'Tam Ekran', 'showNotes': 'Notları Göster',
+    'tools': 'Araçlar', 'darkMode': 'Karanlık Mod', 'corporateMode': 'Kurumsal Mod', 'fullscreen': 'Tam Ekran', 'showNotes': 'Notları Göster',
+    'corporateModeEnabled': 'Kurumsal antet etkinleştirildi', 'corporateModeDisabled': 'Kurumsal antet devre dışı',
     'save': 'Kaydet', 'reload': 'Yenile', 'dismiss': 'Kapat',
     'cancel': 'İptal', 'find': 'Bul', 'later': 'Sonra', 'exit': 'Çıkış',
     'title.open': 'Dosya Aç (Ctrl+O)', 'title.recent': 'Son Dosyalar',
@@ -214,6 +217,7 @@ const UI_STRINGS = {
     'ctx.addNote': 'Not Ekle', 'ctx.editNote': 'Notu Düzenle',
     'ctx.deleteNote': 'Notu Sil', 'ctx.findNote': 'Not Bul',
     'ctx.insertImage': 'Resim Ekle', 'ctx.deleteImage': 'Resmi Sil',
+    'ctx.addToSlider': 'Slider\'a Ekle',
     'ctx.selectAll': 'Tümünü Seç',
     'ctx.openFolder': 'Klasörü Aç', 'ctx.copyPath': 'Yolu Kopyala',
     'ctx.removeRecent': 'Son Dosyalardan Kaldır',
@@ -331,8 +335,12 @@ function applyInterfaceLang(lang) {
 }
 
 const TIMING = {
-  previewDebounceDelay: 3000
+  previewDebounceDelay: 400,   // Editor input debounce (was 3000ms)
+  previewRenderDelay: 400      // Preview render debounce
 };
+
+// Debounce delay constant used in formatting operations
+const PREVIEW_DEBOUNCE_DELAY = 400;
 
 const STORAGE = {
   maxRecentFiles: 100
@@ -394,6 +402,84 @@ const darkModeToggle = document.getElementById('darkModeToggle');
 
 // Current file tracking
 let currentFilePath = null;
+
+// ============================================
+// UNDO / REDO HISTORY
+// ============================================
+const MAX_UNDO_HISTORY = 100;
+let undoHistory = [];   // past states (string[])
+let redoHistory = [];   // future states (string[])
+
+function historyPush(content) {
+  if (undoHistory.length > 0 && undoHistory[undoHistory.length - 1] === content) return;
+  undoHistory.push(content);
+  if (undoHistory.length > MAX_UNDO_HISTORY) undoHistory.shift();
+  redoHistory = []; // clear redo on new change
+}
+
+function historyUndo() {
+  if (undoHistory.length === 0) return;
+  const currentContent = isEditMode ? markdownEditor.value : originalMarkdown;
+  redoHistory.push(currentContent);
+  const prevContent = undoHistory.pop();
+
+  if (isEditMode) {
+    markdownEditor.value = prevContent;
+    hasUnsavedChanges = (prevContent !== originalMarkdown);
+    updateUnsavedIndicator();
+    clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(() => renderMarkdown(prevContent), TIMING.previewDebounceDelay);
+  } else {
+    originalMarkdown = prevContent;
+    invalidateTranslationCache();
+    renderMarkdown(prevContent);
+  }
+}
+
+function historyRedo() {
+  if (redoHistory.length === 0) return;
+  const currentContent = isEditMode ? markdownEditor.value : originalMarkdown;
+  undoHistory.push(currentContent);
+  const nextContent = redoHistory.pop();
+
+  if (isEditMode) {
+    markdownEditor.value = nextContent;
+    hasUnsavedChanges = (nextContent !== originalMarkdown);
+    updateUnsavedIndicator();
+    clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(() => renderMarkdown(nextContent), TIMING.previewDebounceDelay);
+  } else {
+    originalMarkdown = nextContent;
+    invalidateTranslationCache();
+    renderMarkdown(nextContent);
+  }
+}
+
+function historyClear() {
+  undoHistory = [];
+  redoHistory = [];
+}
+
+// ============================================
+// CORPORATE MODE
+// ============================================
+let corporateMode = false; // Always starts disabled; user must press Ctrl+Shift+O to enable
+
+function setCorporateMode(enabled) {
+  corporateMode = enabled;
+  const toggleEl = document.getElementById('corporateModeToggle');
+  if (toggleEl) toggleEl.classList.toggle('active', enabled);
+  if (enabled) {
+    document.body.classList.add('corporate-mode');
+  } else {
+    document.body.classList.remove('corporate-mode');
+  }
+}
+
+// Initialize corporate mode on startup
+if (corporateMode) {
+  document.body.classList.add('corporate-mode');
+}
 
 // File watching state
 let isFileTrackingActive = false;
@@ -997,6 +1083,7 @@ function loadDarkModePreference() {
 
 // Update Mermaid theme based on dark mode and re-render diagrams
 async function updateMermaidTheme(isDark) {
+  mermaidSvgCache.clear(); // SVG colours differ between themes
   mermaid.initialize(getMermaidConfig(isDark));
 
   // Re-render existing content if there's markdown loaded
@@ -1045,6 +1132,22 @@ fullscreenToggle.addEventListener('click', (e) => {
 
 document.addEventListener('fullscreenchange', () => {
   fullscreenToggle.classList.toggle('active', !!document.fullscreenElement);
+});
+
+// Corporate Mode toggle handler
+const corporateModeToggle = document.getElementById('corporateModeToggle');
+if (corporateModeToggle) {
+  corporateModeToggle.classList.toggle('active', corporateMode);
+  corporateModeToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setCorporateMode(!corporateMode);
+  });
+}
+
+// Listen for Ctrl+Shift+O from main process
+ipcRenderer.on('toggle-corporate-mode', () => {
+  setCorporateMode(!corporateMode);
+  showNotification(i18n(corporateMode ? 'corporateModeEnabled' : 'corporateModeDisabled'), 2500);
 });
 
 // Show/Hide Notes toggle
@@ -1252,7 +1355,8 @@ exportPdfBtn.addEventListener('click', () => {
   const pathParts = currentFilePath.split(/[\\/]/);
   const currentFileName = pathParts.pop();
 
-  ipcRenderer.send('export-pdf', { currentFileName });
+  const channel = corporateMode ? 'export-pdf-corporate' : 'export-pdf';
+  ipcRenderer.send(channel, { currentFileName });
 });
 
 // Convert Mermaid element to base64 PNG using native browser rendering
@@ -1474,7 +1578,8 @@ exportWordBtn.addEventListener('click', async () => {
     const htmlContent = viewerClone.innerHTML;
     console.log('Sending export-word IPC, HTML length:', htmlContent.length);
 
-    ipcRenderer.send('export-word', { currentFileName, htmlContent });
+    const wordChannel = corporateMode ? 'export-word-corporate' : 'export-word';
+    ipcRenderer.send(wordChannel, { currentFileName, htmlContent });
   } catch (err) {
     console.error('Word export error:', err);
     alert(i18n('alert.wordError') + err.message);
@@ -1546,8 +1651,19 @@ function reloadCurrentFile() {
   ipcRenderer.send('reload-file', { filePath: currentFilePath });
 }
 
-// Handle PDF export result
+// Before printToPDF: main signals renderer to drop dark mode for a clean light export
+// Letterhead is handled by main.js via printToPDF headerTemplate/footerTemplate (every page)
+ipcRenderer.on('prepare-for-pdf-export', () => {
+  document.body.classList.remove('dark-mode');
+  // Double rAF ensures the style change is painted before main calls printToPDF
+  requestAnimationFrame(() => requestAnimationFrame(() => ipcRenderer.send('pdf-export-ready')));
+});
+
 ipcRenderer.on('pdf-export-result', (event, data) => {
+  // Restore dark mode if it was active before the export
+  if (localStorage.getItem('darkMode') === 'enabled') {
+    document.body.classList.add('dark-mode');
+  }
   if (data.success) {
     console.log('PDF exported successfully to:', data.path);
     const fileName = data.path.split(/[\\/]/).pop();
@@ -1616,7 +1732,30 @@ exitEditBtn.addEventListener('click', () => {
   if (isEditMode) toggleEditBtn.click();
 });
 
-// Live preview with 3-second debounce
+// Tab key → insert 2 spaces (prevent focus change)
+markdownEditor.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const start = markdownEditor.selectionStart;
+    const end = markdownEditor.selectionEnd;
+    const spaces = '  '; // 2 spaces
+    markdownEditor.value = markdownEditor.value.substring(0, start) + spaces + markdownEditor.value.substring(end);
+    markdownEditor.selectionStart = markdownEditor.selectionEnd = start + spaces.length;
+    // Trigger input event for unsaved state tracking
+    markdownEditor.dispatchEvent(new Event('input'));
+  }
+});
+
+// Push to undo history on significant changes (debounced)
+let historyDebounceTimer = null;
+markdownEditor.addEventListener('input', () => {
+  clearTimeout(historyDebounceTimer);
+  historyDebounceTimer = setTimeout(() => {
+    if (isEditMode) historyPush(markdownEditor.value);
+  }, 800);
+});
+
+// Live preview with fast debounce
 markdownEditor.addEventListener('input', () => {
   if (!isEditMode) return;
 
@@ -1639,6 +1778,46 @@ markdownEditor.addEventListener('input', () => {
   }, TIMING.previewDebounceDelay);
 });
 
+// Sync editor textarea content with originalMarkdown after external changes (e.g. delete operations)
+function syncEditorWithStore() {
+  if (isEditMode && markdownEditor.value !== originalMarkdown) {
+    const cursorPos = markdownEditor.selectionStart;
+    markdownEditor.value = originalMarkdown;
+    // Restore cursor position (clamped to new length)
+    const newPos = Math.min(cursorPos, originalMarkdown.length);
+    markdownEditor.selectionStart = markdownEditor.selectionEnd = newPos;
+  }
+}
+
+// If cursor is inside a fenced code block, return the position just after the closing ```
+// Returns the original insertPos if cursor is not inside a code block
+function skipPastCodeBlock(content, insertPos) {
+  // Look backwards from insertPos to see if we're inside ``` ... ```
+  const before = content.substring(0, insertPos);
+  const fenceOpenRegex = /```[\w]*\n/g;
+  let lastFenceOpen = -1;
+  let m;
+  while ((m = fenceOpenRegex.exec(before)) !== null) {
+    lastFenceOpen = m.index + m[0].length;
+  }
+  if (lastFenceOpen === -1) return insertPos; // not inside any fence
+
+  // Count ``` closings between lastFenceOpen and insertPos
+  const between = before.substring(lastFenceOpen);
+  const closeCount = (between.match(/```/g) || []).length;
+  if (closeCount % 2 === 0) {
+    // Even number of closes → we're inside an open block
+    // Find the closing ``` after insertPos
+    const closeIdx = content.indexOf('```', insertPos);
+    if (closeIdx !== -1) {
+      // Position after the closing ``` and its newline
+      const afterClose = closeIdx + 3;
+      return content[afterClose] === '\n' ? afterClose + 1 : afterClose;
+    }
+  }
+  return insertPos;
+}
+
 // Save file
 function saveMarkdownFile() {
   if (!currentFilePath) {
@@ -1655,6 +1834,20 @@ function saveMarkdownFile() {
 
 // Save button click
 saveButton.addEventListener('click', saveMarkdownFile);
+
+// Ctrl+Z (Undo) and Ctrl+Y (Redo) shortcuts
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+    e.preventDefault();
+    historyUndo();
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+    e.preventDefault();
+    historyRedo();
+  }
+});
+
+// Note: Ctrl+Shift+O is intercepted by main.js (before-input-event) and forwarded
+// as 'toggle-corporate-mode' IPC — handled above at ipcRenderer.on('toggle-corporate-mode')
 
 // Ctrl+S keyboard shortcut
 document.addEventListener('keydown', (e) => {
@@ -2472,8 +2665,117 @@ async function translateMarkdownDocument(md, targetLang) {
   return result.join('');
 }
 
-// Process markdown with Mermaid support
-async function renderMarkdown(content) {
+// ============================================
+// RENDER OPTIMIZATION
+// ============================================
+
+let renderGeneration = 0; // Stale render cancellation counter
+const mermaidSvgCache = new Map(); // Cache: mermaid source → rendered SVG innerHTML (cleared on theme change)
+
+// Detect render mode based on content diff
+function detectRenderMode(oldContent, newContent) {
+  if (!oldContent) return 'full';
+
+  // Check if mermaid/omniware/slider blocks changed
+  const hasMermaid = /```mermaid/i.test(newContent) || /```mermaid/i.test(oldContent);
+  const hasOmniware = /```omniware/i.test(newContent) || /```omniware/i.test(oldContent);
+  const hasSlider = /<!--\s*slider/i.test(newContent) || /<!--\s*slider/i.test(oldContent);
+
+  if (!hasMermaid && !hasOmniware && !hasSlider) {
+    // Only text/format changes — check if images changed
+    const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    const oldImgs = [...oldContent.matchAll(imgRegex)].map(m => m[2]).join(',');
+    const newImgs = [...newContent.matchAll(imgRegex)].map(m => m[2]).join(',');
+    if (oldImgs === newImgs) {
+      return 'light-format'; // Only text changed
+    }
+    return 'light-media'; // Images changed
+  }
+  return 'full';
+}
+
+// Light-format render: skip mermaid/omniware/prism, just update HTML
+async function renderLightFormat(content, generation) {
+  showLoadingScreen();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  if (generation !== renderGeneration) { hideLoadingScreen(); return; }
+
+  content = removeBOM(content);
+
+  // Extract and placeholder special blocks (same as full render)
+  const mermaidBlocks = [];
+  content = content.replace(/```mermaid[\r\n]+([\s\S]*?)```/g, (match, code) => {
+    const ph = `MERMAID_PH_${mermaidBlocks.length}`;
+    mermaidBlocks.push({ ph, code: code.trim() });
+    return ph;
+  });
+
+  let html = marked.parse(content);
+
+  // Restore mermaid as-is (existing rendered SVGs stay)
+  mermaidBlocks.forEach(({ ph, code }) => {
+    html = html.replace(ph, `<pre class="mermaid">${code}</pre>`);
+  });
+
+  // Protect data URIs
+  const dataUriStore = [];
+  html = html.replace(/<img([^>]*?)src\s*=\s*"(data:image\/[^"]+)"([^>]*?)>/gi, (match, before, dataUri, after) => {
+    const idx = dataUriStore.length;
+    dataUriStore.push(dataUri);
+    return `<img${before}src="https://data-uri-placeholder.local/${idx}"${after}>`;
+  });
+
+  html = DOMPurify.sanitize(html, {
+    ADD_TAGS: ['iframe', 'style'],
+    ADD_ATTR: ['target', 'style', 'class', 'id', 'data-note-id', 'data-note-title', 'data-note-content', 'data-note-color']
+  });
+
+  dataUriStore.forEach((uri, idx) => {
+    html = html.replace(`https://data-uri-placeholder.local/${idx}`, uri);
+  });
+
+  if (generation !== renderGeneration) { hideLoadingScreen(); return; }
+
+  viewer.innerHTML = html;
+  applyNoteStyles();
+  addTableMaximizeButtons();
+  buildTableOfContents();
+  updateShowNotesToggleVisibility();
+  updateNotesList();
+
+  // Targeted highlighting: only highlight NEW code blocks
+  highlightNewElements();
+  addCodeBlockCopyButtons();
+  hideLoadingScreen();
+}
+
+// Highlight only elements not yet processed by Prism
+function highlightNewElements() {
+  if (typeof Prism === 'undefined') return;
+  viewer.querySelectorAll('pre code:not(.prism-highlighted)').forEach(el => {
+    Prism.highlightElement(el);
+    el.classList.add('prism-highlighted');
+  });
+}
+
+// Smart render dispatcher — chooses mode based on content diff
+let _lastRenderedContent = null;
+async function renderMarkdown(content, forceMode = null) {
+  const generation = ++renderGeneration;
+  const mode = forceMode || detectRenderMode(_lastRenderedContent, content);
+
+  if (mode === 'light-format' && _lastRenderedContent !== null) {
+    _lastRenderedContent = content;
+    await renderLightFormat(content, generation);
+    return;
+  }
+
+  _lastRenderedContent = content;
+  return renderMarkdownFull(content, generation);
+}
+
+// Full render pipeline
+async function renderMarkdownFull(content, generation) {
   // Show loading screen
   showLoadingScreen();
 
@@ -2483,6 +2785,26 @@ async function renderMarkdown(content) {
   try {
     // Remove BOM (Byte Order Mark) if present
     content = removeBOM(content);
+
+    // Extract image slider blocks and replace with placeholders
+    const sliderBlocks = [];
+    let sliderIndex = 0;
+    content = content.replace(/<!--\s*slider-start\s*-->([\s\S]*?)<!--\s*slider-end\s*-->/g, (match, inner) => {
+      const placeholder = `SLIDER_PLACEHOLDER_${sliderIndex}`;
+      // Extract images from the inner block
+      const images = [];
+      const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+      let imgMatch;
+      while ((imgMatch = imgRegex.exec(inner)) !== null) {
+        images.push({ alt: imgMatch[1], src: imgMatch[2] });
+      }
+      if (images.length > 0) {
+        sliderBlocks.push({ placeholder, images });
+        sliderIndex++;
+        return placeholder;
+      }
+      return match; // no images found — leave unchanged
+    });
 
     // First, extract mermaid blocks and replace with placeholders
     const mermaidBlocks = [];
@@ -2528,6 +2850,30 @@ async function renderMarkdown(content) {
     html = html.replace(`https://data-uri-placeholder.local/${idx}`, uri);
   });
 
+  // Replace slider placeholders with slider HTML
+  sliderBlocks.forEach(({ placeholder, images }) => {
+    const slidesHtml = images.map((img, i) =>
+      `<div class="slider-slide${i === 0 ? ' active' : ''}" data-index="${i}">
+        <img src="${img.src}" alt="${img.alt || ''}">
+      </div>`
+    ).join('');
+    const dotsHtml = images.map((_, i) =>
+      `<span class="slider-dot${i === 0 ? ' active' : ''}" data-idx="${i}"></span>`
+    ).join('');
+    const sliderHtml = `<div class="image-slider" data-slider-initialized="false" data-slider-total="${images.length}" data-slider-current="0">
+      <div class="slider-track">${slidesHtml}</div>
+      <button class="slider-btn slider-prev" title="Previous">&#8249;</button>
+      <button class="slider-btn slider-next" title="Next">&#8250;</button>
+      <div class="slider-footer">
+        <div class="slider-dots">${dotsHtml}</div>
+        <span class="slider-counter">1 / ${images.length}</span>
+        <button class="slider-zoom-btn" title="Zoom">&#9974;</button>
+      </div>
+    </div>`;
+    // Use a regex to handle the placeholder that may be wrapped in <p> by marked
+    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), sliderHtml);
+  });
+
   // Replace placeholders with mermaid divs
   mermaidBlocks.forEach(({ placeholder, code }) => {
     const mermaidDiv = `<pre class="mermaid">${code}</pre>`;
@@ -2555,26 +2901,42 @@ async function renderMarkdown(content) {
   // Apply note styles immediately after DOM insertion (before async callbacks)
   applyNoteStyles();
 
-  // Re-run mermaid on the new content
+  // Re-run mermaid on the new content, reusing cached SVGs for unchanged diagrams
   try {
     const mermaidElements = viewer.querySelectorAll('.mermaid');
     if (mermaidElements.length > 0) {
-      // Clear any existing IDs to prevent conflicts
+      const toRender = [];
+
       mermaidElements.forEach((el, index) => {
-        el.removeAttribute('data-processed');
-        el.id = `mermaid-${Date.now()}-${index}`;
+        const src = el.textContent.trim();
+        el.dataset.mermaidSrc = src;
+
+        if (mermaidSvgCache.has(src)) {
+          // Restore cached SVG — no mermaid.run() needed for this element
+          el.innerHTML = mermaidSvgCache.get(src);
+          el.setAttribute('data-processed', 'true');
+        } else {
+          el.removeAttribute('data-processed');
+          el.id = `mermaid-${Date.now()}-${index}`;
+          toRender.push(el);
+        }
       });
 
-      // Render mermaid diagrams
-      await mermaid.run({
-        querySelector: '.mermaid',
-        suppressErrors: false
-      });
+      // Only render new/changed diagrams
+      if (toRender.length > 0) {
+        await mermaid.run({ nodes: toRender, suppressErrors: false });
+        // Store newly rendered SVGs in cache
+        toRender.forEach(el => {
+          if (el.querySelector('svg')) {
+            mermaidSvgCache.set(el.dataset.mermaidSrc, el.innerHTML);
+          }
+        });
+      }
 
-      // Add maximize buttons to rendered diagrams
+      // Add maximize buttons to all diagrams (only if not already wrapped in a container)
       mermaidElements.forEach((el) => {
         const svg = el.querySelector('svg');
-        if (svg) {
+        if (svg && !el.closest('.mermaid-container')) {
           // Wrap in container
           const container = document.createElement('div');
           container.className = 'mermaid-container';
@@ -2657,6 +3019,9 @@ async function renderMarkdown(content) {
     // Add maximize buttons to tables
     addTableMaximizeButtons();
 
+    // Initialize image sliders
+    initSliders();
+
     // Build table of contents
     buildTableOfContents();
 
@@ -2668,7 +3033,10 @@ async function renderMarkdown(content) {
       // Use requestIdleCallback for non-blocking syntax highlighting
       const highlightCallback = window.requestIdleCallback || window.setTimeout;
       highlightCallback(() => {
+        if (generation !== renderGeneration) { hideLoadingScreen(); return; } // stale check
         Prism.highlightAll();
+        // Mark all as highlighted to support targeted highlighting
+        viewer.querySelectorAll('pre code').forEach(el => el.classList.add('prism-highlighted'));
         // Add copy buttons to code blocks after syntax highlighting
         addCodeBlockCopyButtons();
         // Hide loading screen after syntax highlighting is done
@@ -2693,6 +3061,85 @@ async function renderMarkdown(content) {
     </div>`;
     hideLoadingScreen();
   }
+}
+
+// ============================================
+// IMAGE SLIDER
+// ============================================
+
+function initSliders() {
+  viewer.querySelectorAll('.image-slider[data-slider-initialized="false"]').forEach(slider => {
+    slider.setAttribute('data-slider-initialized', 'true');
+
+    const slides = slider.querySelectorAll('.slider-slide');
+    const dots = slider.querySelectorAll('.slider-dot');
+    const counter = slider.querySelector('.slider-counter');
+    const prevBtn = slider.querySelector('.slider-prev');
+    const nextBtn = slider.querySelector('.slider-next');
+    const zoomBtn = slider.querySelector('.slider-zoom-btn');
+    const total = slides.length;
+    let current = 0;
+    let autoPlayTimer = null;
+
+    function goTo(idx) {
+      slides[current].classList.remove('active');
+      dots[current].classList.remove('active');
+      current = ((idx % total) + total) % total;
+      slides[current].classList.add('active');
+      dots[current].classList.add('active');
+      slider.setAttribute('data-slider-current', current);
+      if (counter) counter.textContent = `${current + 1} / ${total}`;
+    }
+
+    function startAutoPlay() {
+      stopAutoPlay();
+      if (total > 1) autoPlayTimer = setInterval(() => goTo(current + 1), 5000);
+    }
+
+    function stopAutoPlay() {
+      if (autoPlayTimer) { clearInterval(autoPlayTimer); autoPlayTimer = null; }
+    }
+
+    prevBtn && prevBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      goTo(current - 1);
+      startAutoPlay();
+    });
+
+    nextBtn && nextBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      goTo(current + 1);
+      startAutoPlay();
+    });
+
+    dots.forEach((dot, i) => {
+      dot.addEventListener('click', (e) => {
+        e.stopPropagation();
+        goTo(i);
+        startAutoPlay();
+      });
+    });
+
+    // Pause on hover
+    slider.addEventListener('mouseenter', stopAutoPlay);
+    slider.addEventListener('mouseleave', startAutoPlay);
+
+    // Zoom button — open active slide image in popup
+    zoomBtn && zoomBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const activeImg = slides[current].querySelector('img');
+      if (activeImg) {
+        const overlay = document.createElement('div');
+        overlay.className = 'slider-zoom-overlay';
+        overlay.innerHTML = `<img src="${activeImg.src}" alt="${activeImg.alt}"><button class="slider-zoom-close">&times;</button>`;
+        overlay.querySelector('.slider-zoom-close').addEventListener('click', () => overlay.remove());
+        overlay.addEventListener('click', (ev) => { if (ev.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+      }
+    });
+
+    startAutoPlay();
+  });
 }
 
 // Add maximize buttons to tables for popup view
@@ -2862,6 +3309,10 @@ function extractTableData(table) {
 ipcRenderer.on('file-opened', async (event, data) => {
   // Reset translation state and start background translation
   resetTranslationState();
+
+  // Clear undo/redo history on new file
+  historyClear();
+  _lastRenderedContent = null;
 
   // Store original markdown for editor
   originalMarkdown = data.content;
@@ -3254,13 +3705,19 @@ function showContextMenu(x, y) {
     ctxFindNote.style.display = 'none';
   }
 
-  // Show/hide "Delete Image" based on whether an image was right-clicked
+  // Show/hide "Delete Image" and "Copy Image Source" based on whether an image was right-clicked
   const clickedImg = rightClickTarget && (rightClickTarget.tagName === 'IMG' ? rightClickTarget : rightClickTarget.closest?.('img'));
-  if (clickedImg && clickedImg.src && clickedImg.src.startsWith('data:')) {
-    ctxDeleteImage.style.display = '';
+  if (clickedImg && clickedImg.src) {
+    if (clickedImg.src.startsWith('data:')) ctxDeleteImage.style.display = '';
+    else ctxDeleteImage.style.display = 'none';
+    if (ctxCopyImageSrc) ctxCopyImageSrc.style.display = '';
   } else {
     ctxDeleteImage.style.display = 'none';
+    if (ctxCopyImageSrc) ctxCopyImageSrc.style.display = 'none';
   }
+
+  // Update new context menu items visibility (mermaid, table, code, etc.)
+  updateNewContextMenuItems();
 
   // Use helper for positioning (handles screen edge adjustment)
   positionContextMenu(contextMenu, x, y);
@@ -3943,21 +4400,37 @@ ctxDeleteNote.addEventListener('click', () => {
     const match = findNoteSpanInSource(activeSource, noteEl);
     if (match) {
       const replacement = isLabel ? '' : match[1];
-      const scrollPosition = contentWrapper.scrollTop;
       const newContent =
         activeSource.substring(0, match.index) +
         replacement +
         activeSource.substring(match.index + match[0].length);
 
-      commitViewModeEdit(newContent, scrollPosition, () => {
-        // Sync to originalMarkdown: find same note by ID and delete it
-        const nid = noteEl.getAttribute('data-note-id');
+      // Update source silently (no full re-render)
+      const nid = noteEl.getAttribute('data-note-id');
+      if (isShowingTranslation && translatedMarkdown) {
+        translatedMarkdown = newContent;
+        // Sync note removal to originalMarkdown
         const origMatch = nid ? findNoteSpanById(originalMarkdown, nid) : findNoteSpanInSource(originalMarkdown, noteEl);
         if (origMatch) {
           const origReplacement = isLabel ? '' : origMatch[1];
           originalMarkdown = originalMarkdown.substring(0, origMatch.index) + origReplacement + originalMarkdown.substring(origMatch.index + origMatch[0].length);
         }
-      });
+        clearTimeout(enViewResyncTimer);
+        enViewResyncTimer = setTimeout(() => {
+          if (isShowingTranslation && originalMarkdown) startBackgroundTranslation(true);
+        }, 2000);
+      } else {
+        originalMarkdown = newContent;
+        invalidateTranslationCache();
+      }
+      hasUnsavedChanges = true;
+
+      // DOM patch — preserves mermaid diagrams and avoids full re-render
+      if (nid) {
+        patchNoteInDOM(nid, { deleted: true });
+      } else {
+        renderMarkdown(getActiveMarkdown()); // fallback for legacy notes without ID
+      }
 
       showNotification(i18n('notif.noteRemoved'), 1500);
     } else {
@@ -4068,15 +4541,16 @@ noteSaveBtn.addEventListener('click', () => {
           newNoteHtml = `<span class="noted-text"${noteIdAttr} data-note-title="${escTitle}" data-note-content="${escContent}" data-note-color="${color}" style="${_noteStyle}">${innerContent}</span>`;
         }
 
-        const scrollPosition = contentWrapper.scrollTop;
         const newContent =
           activeSource.substring(0, match.index) +
           newNoteHtml +
           activeSource.substring(match.index + match[0].length);
 
-        commitViewModeEdit(newContent, scrollPosition, () => {
-          // Sync to originalMarkdown: find same note by ID and update attributes
-          const nid = editingNoteElement.getAttribute('data-note-id');
+        // Update source silently (no full re-render)
+        const nid = editingNoteElement.getAttribute('data-note-id');
+        if (isShowingTranslation && translatedMarkdown) {
+          translatedMarkdown = newContent;
+          // Sync to originalMarkdown
           const origMatch = nid ? findNoteSpanById(originalMarkdown, nid) : findNoteSpanInSource(originalMarkdown, editingNoteElement);
           if (origMatch) {
             const origInner = origMatch[1];
@@ -4095,7 +4569,34 @@ noteSaveBtn.addEventListener('click', () => {
             originalMarkdown = originalMarkdown.substring(0, origMatch.index) + origNewHtml + originalMarkdown.substring(origMatch.index + origMatch[0].length);
             translateNoteAttrsToOriginal(nid, title, content);
           }
-        });
+          clearTimeout(enViewResyncTimer);
+          enViewResyncTimer = setTimeout(() => {
+            if (isShowingTranslation && originalMarkdown) startBackgroundTranslation(true);
+          }, 2000);
+        } else {
+          originalMarkdown = newContent;
+          invalidateTranslationCache();
+        }
+        hasUnsavedChanges = true;
+
+        // DOM patch — build updates based on note type, preserves mermaid diagrams
+        const domUpdates = { title, content };
+        if (isNoteLabel) {
+          domUpdates.style = `background-color:${color}${labelPosStyle}`;
+          domUpdates.labelText = labelName;
+        } else if (isNoteImage) {
+          const r = parseInt(color.slice(1,3), 16), g = parseInt(color.slice(3,5), 16), b = parseInt(color.slice(5,7), 16);
+          domUpdates.style = `background-color:rgba(${r},${g},${b},0.15)`;
+        } else {
+          const _r = parseInt(color.slice(1,3), 16), _g = parseInt(color.slice(3,5), 16), _b = parseInt(color.slice(5,7), 16);
+          domUpdates.style = `background-color:rgba(${_r},${_g},${_b},0.25);text-decoration:underline;text-decoration-color:${color};text-decoration-thickness:2px`;
+          domUpdates.color = color;
+        }
+        if (nid) {
+          patchNoteInDOM(nid, domUpdates);
+        } else {
+          renderMarkdown(getActiveMarkdown()); // fallback for legacy notes without ID
+        }
 
         showNotification(i18n('notif.noteUpdated'), 1500);
       } else {
@@ -4956,6 +5457,649 @@ ctxDeleteImage.addEventListener('click', () => {
 
   showNotification(i18n('notif.imageDeleted'), 1500);
 });
+
+// ============================================
+// NEW CONTEXT MENU ITEMS
+// ============================================
+
+const ctxInsertMermaid = document.getElementById('ctxInsertMermaid');
+const ctxInsertTable = document.getElementById('ctxInsertTable');
+const ctxDeleteMermaid = document.getElementById('ctxDeleteMermaid');
+const ctxDeleteTable = document.getElementById('ctxDeleteTable');
+const ctxCopyCode = document.getElementById('ctxCopyCode');
+const ctxCopyImageSrc = document.getElementById('ctxCopyImageSrc');
+const ctxAddToSlider = document.getElementById('ctxAddToSlider');
+
+// Copy Image Source (base64 data URL)
+ctxCopyImageSrc && ctxCopyImageSrc.addEventListener('click', () => {
+  hideContextMenu();
+  if (!rightClickTarget) return;
+  const imgEl = rightClickTarget.tagName === 'IMG' ? rightClickTarget : rightClickTarget.closest?.('img');
+  if (imgEl && imgEl.src) {
+    clipboard.writeText(imgEl.src);
+    showNotification(i18n('notif.copied'), 1500);
+  }
+});
+
+// Copy Code block content
+ctxCopyCode && ctxCopyCode.addEventListener('click', () => {
+  hideContextMenu();
+  if (!rightClickTarget) return;
+  const codeEl = rightClickTarget.closest('pre')?.querySelector('code') ||
+                 rightClickTarget.closest('code') ||
+                 (rightClickTarget.tagName === 'CODE' ? rightClickTarget : null);
+  if (codeEl) {
+    clipboard.writeText(codeEl.textContent);
+    showNotification(i18n('notif.copied'), 1500);
+  }
+});
+
+// Add to Slider — create or expand a slider around the right-clicked image (max 5 images)
+ctxAddToSlider && ctxAddToSlider.addEventListener('click', () => {
+  hideContextMenu();
+  if (!rightClickTarget || !currentFilePath) return;
+
+  const imgEl = rightClickTarget.tagName === 'IMG' ? rightClickTarget : rightClickTarget.closest?.('img');
+  if (!imgEl || !imgEl.src) return;
+
+  const altText = imgEl.alt || '';
+  // Build the markdown image pattern to find in source (first 50 chars of src for data URIs)
+  const srcPrefix = imgEl.src.substring(0, 50);
+  const searchStart = `![${altText}](${srcPrefix}`;
+
+  const content = isEditMode ? markdownEditor.value : originalMarkdown;
+  const imgIdx = content.indexOf(searchStart);
+  if (imgIdx === -1) {
+    showNotification(i18n('notif.imageNotFound'), 2000);
+    return;
+  }
+
+  // Find full image markdown: ![alt](src)
+  const imgEndIdx = content.indexOf(')', imgIdx + searchStart.length);
+  if (imgEndIdx === -1) return;
+  const fullImgMd = content.substring(imgIdx, imgEndIdx + 1);
+
+  // Check if this image is already inside a slider block
+  const beforeImg = content.substring(0, imgIdx);
+  const afterImg = content.substring(imgEndIdx + 1);
+  const lastSliderStart = beforeImg.lastIndexOf('<!-- slider-start -->');
+  const lastSliderEndBeforeImg = beforeImg.lastIndexOf('<!-- slider-end -->');
+
+  if (lastSliderStart !== -1 && lastSliderStart > lastSliderEndBeforeImg) {
+    // Image is already inside a slider — check if we can add another image
+    const sliderEndAfter = afterImg.indexOf('<!-- slider-end -->');
+    if (sliderEndAfter !== -1) {
+      const sliderContent = content.substring(lastSliderStart, imgEndIdx + 1 + sliderEndAfter + '<!-- slider-end -->'.length);
+      const existingImages = (sliderContent.match(/!\[[^\]]*\]\([^)]+\)/g) || []);
+      if (existingImages.length >= 5) {
+        showNotification(i18n('ctx.addToSlider') + ': max 5 images', 2000);
+        return;
+      }
+      // Open image dialog to add a new image to this slider
+      ipcRenderer.send('open-image-dialog');
+      // We'll insert the new image right after the current one
+      ipcRenderer.once('image-selected', (event, data) => {
+        if (data.error) {
+          showNotification(i18n('notif.imageFailed') + data.error, 3000);
+          return;
+        }
+        const { base64, mimeType, fileName: fn } = data;
+        let newImgMd;
+        if (mimeType === 'image/svg+xml') {
+          newImgMd = `![${fn}](data:${mimeType};base64,${base64})`;
+        } else {
+          // Compress to WebP like standard image insertion
+          const tmpImg = new Image();
+          tmpImg.onload = () => {
+            let w = tmpImg.naturalWidth, h = tmpImg.naturalHeight;
+            if (w > 1000 || h > 1000) {
+              const scale = Math.min(1000 / w, 1000 / h);
+              w = Math.round(w * scale); h = Math.round(h * scale);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(tmpImg, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/webp', 0.70);
+            newImgMd = `![${fn}](${dataUrl})`;
+            applySliderImageAdd(newImgMd, imgEndIdx + 1);
+          };
+          tmpImg.src = `data:${mimeType};base64,${base64}`;
+          return; // wait for onload
+        }
+        applySliderImageAdd(newImgMd, imgEndIdx + 1);
+      });
+      return;
+    }
+  }
+
+  // Image is NOT in a slider — wrap it in a new slider block
+  historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
+
+  // Find the full line range of the image (including leading/trailing newlines)
+  let wrapStart = imgIdx;
+  let wrapEnd = imgEndIdx + 1;
+
+  const newContent = content.substring(0, wrapStart)
+    + '<!-- slider-start -->\n' + fullImgMd + '\n<!-- slider-end -->'
+    + content.substring(wrapEnd);
+
+  if (isEditMode) {
+    markdownEditor.value = newContent;
+    hasUnsavedChanges = true;
+    updateUnsavedIndicator();
+    clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
+  } else {
+    const scrollPosition = contentWrapper.scrollTop;
+    originalMarkdown = newContent;
+    invalidateTranslationCache();
+    renderMarkdown(originalMarkdown, 'full').then(() => {
+      contentWrapper.scrollTop = scrollPosition;
+    });
+    hasUnsavedChanges = true;
+  }
+  showNotification('Slider created', 1500);
+});
+
+// Helper: add an image markdown string to the slider at the given position
+function applySliderImageAdd(newImgMd, insertPos) {
+  historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
+  const content = isEditMode ? markdownEditor.value : originalMarkdown;
+  const newContent = content.substring(0, insertPos) + '\n' + newImgMd + content.substring(insertPos);
+
+  if (isEditMode) {
+    markdownEditor.value = newContent;
+    hasUnsavedChanges = true;
+    updateUnsavedIndicator();
+    clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
+  } else {
+    const scrollPosition = contentWrapper.scrollTop;
+    originalMarkdown = newContent;
+    invalidateTranslationCache();
+    renderMarkdown(originalMarkdown, 'full').then(() => {
+      contentWrapper.scrollTop = scrollPosition;
+    });
+    hasUnsavedChanges = true;
+  }
+  showNotification('Image added to slider', 1500);
+}
+
+// Insert Mermaid → open MermaidTemplateDialog
+ctxInsertMermaid && ctxInsertMermaid.addEventListener('click', () => {
+  hideContextMenu();
+  openMermaidTemplateDialog();
+});
+
+// Insert Table → open TableInsertDialog
+ctxInsertTable && ctxInsertTable.addEventListener('click', () => {
+  hideContextMenu();
+  openTableInsertDialog();
+});
+
+// Delete Mermaid — remove mermaid block from source
+ctxDeleteMermaid && ctxDeleteMermaid.addEventListener('click', () => {
+  hideContextMenu();
+  if (!rightClickTarget || !currentFilePath) return;
+
+  const mermaidEl = rightClickTarget.closest('.mermaid-container')?.querySelector('.mermaid')
+    || rightClickTarget.closest('.mermaid');
+  if (!mermaidEl) return;
+
+  // Collect text samples from the SVG to identify the block
+  const svgTexts = [];
+  mermaidEl.querySelectorAll('text, tspan').forEach(el => {
+    const t = el.textContent.trim();
+    if (t && t.length > 1) svgTexts.push(t);
+  });
+
+  deleteMermaidFromSource(svgTexts, mermaidEl);
+});
+
+function deleteMermaidFromSource(svgTexts, mermaidEl) {
+  const content = originalMarkdown;
+  const blocks = [];
+  const mermaidBlockRegex = /```mermaid[\r\n]([\s\S]*?)```/g;
+  let m;
+  while ((m = mermaidBlockRegex.exec(content)) !== null) {
+    blocks.push({ start: m.index, end: m.index + m[0].length, code: m[1] });
+  }
+
+  if (blocks.length === 0) {
+    showNotification('Could not find mermaid block in source', 2000);
+    return;
+  }
+
+  let bestBlock = null;
+  if (blocks.length === 1) {
+    bestBlock = blocks[0];
+  } else {
+    // Match by text samples — find block with most matches
+    let bestScore = -1;
+    for (const block of blocks) {
+      const blockLower = block.code.toLowerCase();
+      let score = 0;
+      // For pie charts, check quoted values
+      const pieQuotedRegex = /"([^"]+)"/g;
+      const pieMatches = [...block.code.matchAll(pieQuotedRegex)].map(x => x[1]);
+      for (const sample of svgTexts.slice(0, 5)) {
+        const sLower = sample.toLowerCase();
+        if (blockLower.includes(sLower)) score++;
+        // Pie chart matching: match quoted strings
+        if (pieMatches.some(pm => pm.toLowerCase() === sLower)) score += 2;
+      }
+      if (score > bestScore) { bestScore = score; bestBlock = block; }
+    }
+    // Require at least 2/5 matches for safety
+    if (bestScore < 2 && blocks.length > 1) {
+      showNotification('Could not uniquely identify mermaid block', 2000);
+      return;
+    }
+  }
+
+  if (!bestBlock) return;
+  let removeStart = bestBlock.start;
+  let removeEnd = bestBlock.end;
+  if (removeStart > 0 && content[removeStart - 1] === '\n') removeStart--;
+  if (removeEnd < content.length && content[removeEnd] === '\n') removeEnd++;
+
+  historyPush(originalMarkdown);
+  originalMarkdown = content.substring(0, removeStart) + content.substring(removeEnd);
+  invalidateTranslationCache();
+  syncEditorWithStore();
+  renderMarkdown(originalMarkdown, 'full');
+  showNotification('Mermaid diagram deleted', 1500);
+}
+
+// Delete Table — remove markdown table from source
+ctxDeleteTable && ctxDeleteTable.addEventListener('click', () => {
+  hideContextMenu();
+  if (!rightClickTarget || !currentFilePath) return;
+
+  const tableEl = rightClickTarget.closest('table');
+  if (!tableEl) return;
+
+  // Collect header cell texts for matching
+  const headers = [];
+  tableEl.querySelectorAll('th').forEach(th => {
+    const t = th.textContent.trim();
+    if (t) headers.push(t);
+  });
+
+  deleteTableFromSource(headers);
+});
+
+function deleteTableFromSource(headers) {
+  const content = originalMarkdown;
+  // Find markdown tables: lines starting with |
+  const tableRegex = /(\|[^\n]+\|\n)+/g;
+  let m;
+  let bestMatch = null;
+  let bestScore = -1;
+
+  while ((m = tableRegex.exec(content)) !== null) {
+    const tableText = m[0];
+    // Check first line (header row) for matching headers
+    const firstLine = tableText.split('\n')[0];
+    let score = 0;
+    for (const h of headers) {
+      if (firstLine.includes(h)) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = { start: m.index, end: m.index + m[0].length };
+    }
+  }
+
+  if (!bestMatch || bestScore === 0) {
+    showNotification('Could not find table in source', 2000);
+    return;
+  }
+
+  let removeStart = bestMatch.start;
+  let removeEnd = bestMatch.end;
+  if (removeStart > 0 && content[removeStart - 1] === '\n') removeStart--;
+
+  historyPush(originalMarkdown);
+  originalMarkdown = content.substring(0, removeStart) + content.substring(removeEnd);
+  invalidateTranslationCache();
+  syncEditorWithStore();
+  renderMarkdown(originalMarkdown, 'full');
+  showNotification('Table deleted', 1500);
+}
+
+// Update context menu visibility based on right-click target
+const _origShowContextMenu = showContextMenu;
+// Override context menu show to toggle new items
+function updateNewContextMenuItems() {
+  const target = rightClickTarget;
+  if (!target) return;
+
+  const isMermaid = !!(target.closest?.('.mermaid-container') || target.closest?.('.mermaid'));
+  const isTable = !!target.closest?.('table');
+  const isCode = !!(target.closest?.('pre') || target.closest?.('code'));
+  const isImg = target.tagName === 'IMG' || !!target.closest?.('img');
+
+  ctxDeleteMermaid && (ctxDeleteMermaid.style.display = isMermaid ? '' : 'none');
+  ctxDeleteTable && (ctxDeleteTable.style.display = isTable ? '' : 'none');
+  ctxCopyCode && (ctxCopyCode.style.display = isCode ? '' : 'none');
+  ctxCopyImageSrc && (ctxCopyImageSrc.style.display = isImg ? '' : 'none');
+
+  // Show "Add to Slider" for images with data: src (same condition as delete image)
+  const imgForSlider = isImg && (target.tagName === 'IMG' ? target : target.closest?.('img'));
+  const hasDataSrc = imgForSlider && imgForSlider.src && imgForSlider.src.startsWith('data:');
+  ctxAddToSlider && (ctxAddToSlider.style.display = hasDataSrc ? '' : 'none');
+}
+
+// ============================================
+// MERMAID TEMPLATE DIALOG
+// ============================================
+
+const MERMAID_TEMPLATES = {
+  flowchart: `flowchart TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Process A]
+    B -->|No| D[Process B]
+    C --> E[End]
+    D --> E`,
+  sequence: `sequenceDiagram
+    participant A as Alice
+    participant B as Bob
+    A->>B: Hello Bob!
+    B-->>A: Hello Alice!
+    A->>B: How are you?
+    B-->>A: I'm good, thanks!`,
+  class: `classDiagram
+    class Animal {
+      +String name
+      +int age
+      +makeSound()
+    }
+    class Dog {
+      +String breed
+      +bark()
+    }
+    Animal <|-- Dog`,
+  state: `stateDiagram-v2
+    [*] --> Idle
+    Idle --> Processing : Start
+    Processing --> Done : Complete
+    Processing --> Error : Fail
+    Done --> [*]
+    Error --> Idle : Retry`,
+  er: `erDiagram
+    CUSTOMER ||--o{ ORDER : places
+    ORDER ||--|{ LINE-ITEM : contains
+    CUSTOMER {
+        string name
+        string email
+    }
+    ORDER {
+        int orderNumber
+        date createdAt
+    }`,
+  gantt: `gantt
+    title Project Timeline
+    dateFormat  YYYY-MM-DD
+    section Planning
+    Requirements   :a1, 2024-01-01, 7d
+    Design         :a2, after a1, 5d
+    section Development
+    Implementation :b1, after a2, 14d
+    Testing        :b2, after b1, 7d`,
+  pie: `pie title Distribution
+    "Category A" : 40
+    "Category B" : 30
+    "Category C" : 20
+    "Category D" : 10`,
+  gitgraph: `gitGraph
+    commit
+    branch develop
+    checkout develop
+    commit
+    commit
+    checkout main
+    merge develop
+    commit`
+};
+
+const mermaidTemplateOverlay = document.getElementById('mermaidTemplateOverlay');
+const mermaidTemplateClose = document.getElementById('mermaidTemplateClose');
+const mermaidTemplateCancelBtn = document.getElementById('mermaidTemplateCancelBtn');
+const mermaidTemplateInsertBtn = document.getElementById('mermaidTemplateInsertBtn');
+const mermaidTemplateCode = document.getElementById('mermaidTemplateCode');
+
+function openMermaidTemplateDialog() {
+  if (!mermaidTemplateOverlay) return;
+  // Set default template
+  mermaidTemplateCode.value = MERMAID_TEMPLATES.flowchart;
+  // Highlight first button
+  mermaidTemplateOverlay.querySelectorAll('.mermaid-tpl-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tpl === 'flowchart');
+  });
+  mermaidTemplateOverlay.classList.add('visible');
+  mermaidTemplateCode.focus();
+}
+
+function closeMermaidTemplateDialog() {
+  mermaidTemplateOverlay && mermaidTemplateOverlay.classList.remove('visible');
+}
+
+function insertMermaidFromDialog() {
+  const code = mermaidTemplateCode.value.trim();
+  if (!code) return;
+  closeMermaidTemplateDialog();
+
+  const mermaidBlock = '\n```mermaid\n' + code + '\n```\n';
+  insertContentAtCursor(mermaidBlock);
+}
+
+mermaidTemplateOverlay && mermaidTemplateOverlay.querySelectorAll('.mermaid-tpl-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tpl = MERMAID_TEMPLATES[btn.dataset.tpl];
+    if (tpl) mermaidTemplateCode.value = tpl;
+    mermaidTemplateOverlay.querySelectorAll('.mermaid-tpl-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+mermaidTemplateClose && mermaidTemplateClose.addEventListener('click', closeMermaidTemplateDialog);
+mermaidTemplateCancelBtn && mermaidTemplateCancelBtn.addEventListener('click', closeMermaidTemplateDialog);
+mermaidTemplateInsertBtn && mermaidTemplateInsertBtn.addEventListener('click', insertMermaidFromDialog);
+
+// Ctrl+Enter in dialog → insert
+mermaidTemplateCode && mermaidTemplateCode.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    insertMermaidFromDialog();
+  }
+});
+
+// ============================================
+// TABLE INSERT DIALOG
+// ============================================
+
+const tableInsertOverlay = document.getElementById('tableInsertOverlay');
+const tableInsertClose = document.getElementById('tableInsertClose');
+const tableInsertCancelBtn = document.getElementById('tableInsertCancelBtn');
+const tableInsertBtn = document.getElementById('tableInsertBtn');
+const tableInsertRowsEl = document.getElementById('tableInsertRows');
+const tableInsertColsEl = document.getElementById('tableInsertCols');
+const tableInsertHeaderEl = document.getElementById('tableInsertHeader');
+const tableInsertPreviewEl = document.getElementById('tableInsertPreview');
+const tableInsertMarkdownEl = document.getElementById('tableInsertMarkdown');
+
+function buildTableMarkdown(rows, cols, hasHeader) {
+  const lines = [];
+  // Header row
+  const headerCells = Array.from({ length: cols }, (_, i) => ` Header ${i + 1} `);
+  lines.push('|' + headerCells.join('|') + '|');
+  // Separator
+  const sep = Array.from({ length: cols }, () => ' --- ');
+  lines.push('|' + sep.join('|') + '|');
+  // Data rows
+  const dataRowCount = hasHeader ? rows - 1 : rows;
+  for (let r = 0; r < Math.max(1, dataRowCount); r++) {
+    const cells = Array.from({ length: cols }, (_, c) => ` Cell ${r + 1},${c + 1} `);
+    lines.push('|' + cells.join('|') + '|');
+  }
+  return lines.join('\n');
+}
+
+function updateTablePreview() {
+  if (!tableInsertRowsEl || !tableInsertColsEl) return;
+  const rows = Math.max(1, Math.min(30, parseInt(tableInsertRowsEl.value) || 3));
+  const cols = Math.max(1, Math.min(15, parseInt(tableInsertColsEl.value) || 3));
+  const hasHeader = tableInsertHeaderEl ? tableInsertHeaderEl.checked : true;
+  const md = buildTableMarkdown(rows, cols, hasHeader);
+  if (tableInsertMarkdownEl) tableInsertMarkdownEl.value = md;
+  // HTML preview
+  if (tableInsertPreviewEl) {
+    tableInsertPreviewEl.innerHTML = DOMPurify.sanitize(marked.parse(md));
+  }
+}
+
+function openTableInsertDialog() {
+  if (!tableInsertOverlay) return;
+  updateTablePreview();
+  tableInsertOverlay.classList.add('visible');
+}
+
+function closeTableInsertDialog() {
+  tableInsertOverlay && tableInsertOverlay.classList.remove('visible');
+}
+
+function insertTableFromDialog() {
+  const rows = Math.max(1, parseInt(tableInsertRowsEl?.value) || 3);
+  const cols = Math.max(1, parseInt(tableInsertColsEl?.value) || 3);
+  const hasHeader = tableInsertHeaderEl ? tableInsertHeaderEl.checked : true;
+  const md = buildTableMarkdown(rows, cols, hasHeader);
+  closeTableInsertDialog();
+  insertContentAtCursor('\n' + md + '\n');
+}
+
+tableInsertRowsEl && tableInsertRowsEl.addEventListener('input', updateTablePreview);
+tableInsertColsEl && tableInsertColsEl.addEventListener('input', updateTablePreview);
+tableInsertHeaderEl && tableInsertHeaderEl.addEventListener('change', updateTablePreview);
+tableInsertClose && tableInsertClose.addEventListener('click', closeTableInsertDialog);
+tableInsertCancelBtn && tableInsertCancelBtn.addEventListener('click', closeTableInsertDialog);
+tableInsertBtn && tableInsertBtn.addEventListener('click', insertTableFromDialog);
+
+// Close dialogs on overlay click
+mermaidTemplateOverlay && mermaidTemplateOverlay.addEventListener('click', (e) => {
+  if (e.target === mermaidTemplateOverlay) closeMermaidTemplateDialog();
+});
+tableInsertOverlay && tableInsertOverlay.addEventListener('click', (e) => {
+  if (e.target === tableInsertOverlay) closeTableInsertDialog();
+});
+
+// ============================================
+// UNIVERSAL CONTENT INSERTION AT CURSOR
+// ============================================
+
+// Insert content at cursor position (works in both edit mode and view mode)
+function insertContentAtCursor(content) {
+  historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
+
+  if (isEditMode) {
+    const cursorPos = savedCursorPosition !== null ? savedCursorPosition : markdownEditor.selectionStart;
+    const safePos = skipPastCodeBlock(markdownEditor.value, cursorPos);
+    const before = markdownEditor.value.substring(0, safePos);
+    const after = markdownEditor.value.substring(safePos);
+    const newContent = before + content + after;
+    markdownEditor.value = newContent;
+    const newCursor = safePos + content.length;
+    markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
+    markdownEditor.focus();
+    hasUnsavedChanges = true;
+    updateUnsavedIndicator();
+    clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
+  } else {
+    // View mode: insert at position determined by right-click location in markdown
+    const scrollPosition = contentWrapper.scrollTop;
+    const activeContent = getActiveMarkdown();
+    const insertPos = skipPastCodeBlock(activeContent, getMarkdownInsertPosition());
+    const before = activeContent.substring(0, insertPos);
+    const after = activeContent.substring(insertPos);
+    const newContent = before + content + after;
+    commitViewModeEdit(newContent, scrollPosition, () => {
+      const origPos = Math.min(insertPos, originalMarkdown.length);
+      const origBefore = originalMarkdown.substring(0, origPos);
+      const origAfter = originalMarkdown.substring(origPos);
+      originalMarkdown = origBefore + content + origAfter;
+    });
+  }
+  showNotification('Inserted', 1000);
+}
+
+// ============================================
+// NOTE DOM PATCHING
+// ============================================
+
+// Update a note in the DOM without full re-render (preserves mermaid, prism, scroll)
+function patchNoteInDOM(noteId, updates) {
+  const elements = viewer.querySelectorAll(`[data-note-id="${noteId}"]`);
+  if (!elements.length) {
+    // Fall back to full re-render
+    renderMarkdown(originalMarkdown, 'full');
+    return;
+  }
+
+  elements.forEach(el => {
+    if (updates.title !== undefined) {
+      const esc = updates.title.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      el.setAttribute('data-note-title', esc);
+    }
+    if (updates.content !== undefined) {
+      const esc = updates.content.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      el.setAttribute('data-note-content', esc);
+    }
+    if (updates.color !== undefined) {
+      el.setAttribute('data-note-color', updates.color);
+    }
+    if (updates.style !== undefined) {
+      el.setAttribute('style', updates.style);
+    }
+    if (updates.labelText !== undefined && el.classList.contains('note-label')) {
+      // Update visible label text while keeping all attributes intact
+      el.textContent = updates.labelText;
+    }
+    if (updates.deleted) {
+      // Unwrap: replace span with its children
+      const parent = el.parentNode;
+      if (parent) {
+        while (el.firstChild) parent.insertBefore(el.firstChild, el);
+        parent.removeChild(el);
+      }
+    }
+  });
+
+  // Re-apply note styles in DOM without full render
+  applyNoteStyles();
+  updateNotesList();
+}
+
+// ============================================
+// POPUP EXPORT HANDLER (BroadcastChannel)
+// ============================================
+
+try {
+  const exportChannel = new BroadcastChannel('omnicore-export');
+  exportChannel.onmessage = (event) => {
+    if (!event.data) return;
+    if (event.data.type === 'request-pdf-export') {
+      const currentFileName = currentFilePath ? path.basename(currentFilePath) : null;
+      const channel = corporateMode ? 'export-pdf-corporate' : 'export-pdf';
+      ipcRenderer.send(channel, { currentFileName });
+      ipcRenderer.once('pdf-export-result', (_ev, result) => {
+        exportChannel.postMessage({ type: 'export-result', ...result });
+      });
+    }
+  };
+} catch (e) {
+  console.warn('BroadcastChannel not available:', e.message);
+}
 
 // ============================================
 // Recent Files Context Menu
