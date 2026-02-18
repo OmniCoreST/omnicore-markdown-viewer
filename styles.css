@@ -2646,6 +2646,37 @@ body.dark-mode .context-menu {
 }
 
 /* ============================================
+   IMAGE ZOOM
+   ============================================ */
+
+.img-zoom-container {
+  position: relative;
+  display: inline-block;
+}
+.img-zoom-container img { display: block; }
+
+.img-zoom-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.18s;
+  z-index: 5;
+}
+.img-zoom-container:hover .img-zoom-btn { opacity: 1; }
+
+
+/* ============================================
    MERMAID TEMPLATE DIALOG
    ============================================ */
 
