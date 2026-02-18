@@ -1385,7 +1385,7 @@ viewer.addEventListener('click', (e) => {
   }
 });
 
-// Open file button
+// Open file button (toolbar)
 openFileBtn.addEventListener('click', () => {
   // Check for unsaved changes before opening file dialog
   if (isEditMode && hasUnsavedChanges) {
@@ -1397,6 +1397,14 @@ openFileBtn.addEventListener('click', () => {
   fileMenu.classList.remove('visible');
   ipcRenderer.send('open-file-dialog');
 });
+
+// Welcome screen "Open File" button
+const welcomeOpenBtn = document.getElementById('welcomeOpenBtn');
+if (welcomeOpenBtn) {
+  welcomeOpenBtn.addEventListener('click', () => {
+    ipcRenderer.send('open-file-dialog');
+  });
+}
 
 // Refresh button
 refreshBtn.addEventListener('click', () => {

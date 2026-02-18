@@ -868,6 +868,43 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
   transform: scale(1.35);
 }
 
+/* Open file button on welcome screen */
+.welcome-open-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 28px auto 0;
+  padding: 13px 32px;
+  background: #279EA7;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.12s ease, box-shadow 0.18s ease;
+  box-shadow: 0 3px 12px rgba(39, 158, 167, 0.35);
+  letter-spacing: 0.01em;
+}
+
+.welcome-open-btn:hover {
+  background: #1f8a92;
+  box-shadow: 0 5px 18px rgba(39, 158, 167, 0.45);
+  transform: translateY(-1px);
+}
+
+.welcome-open-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(39, 158, 167, 0.3);
+}
+
+.welcome-open-hint {
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.75;
+  font-family: 'Fira Code', monospace, sans-serif;
+}
+
 /* Version badge — fixed at bottom-left corner of the app window */
 .welcome-version {
   position: fixed;
