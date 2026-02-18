@@ -206,6 +206,12 @@
           "icon": "file-icon.png"
         }
       ]
-    }
+    },
+    "extraResources": [
+      {
+        "from": "README.md",
+        "to": "README.md"
+      }
+    ]
   }
 }

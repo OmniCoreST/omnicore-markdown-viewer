@@ -2098,6 +2098,14 @@ ipcMain.handle('get-version', () => app.getVersion());
 // Return app root path so renderer can construct paths like README.md
 ipcMain.handle('get-app-path', () => app.getAppPath());
 
+// Return README.md path — works in dev (next to main.js) and packaged (extraResources)
+ipcMain.handle('get-readme-path', () => {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'README.md');
+  }
+  return path.join(__dirname, 'README.md');
+});
+
 // IPC handlers for update actions
 ipcMain.on('check-for-updates', () => {
   log('Manual update check requested');
