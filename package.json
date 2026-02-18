@@ -144,28 +144,24 @@
           "ext": "md",
           "name": "Markdown Document",
           "description": "Markdown Document",
-          "icon": "file-icon.png",
           "role": "Viewer"
         },
         {
           "ext": "mmd",
           "name": "Mermaid Diagram",
           "description": "Mermaid Diagram File",
-          "icon": "file-icon.png",
           "role": "Viewer"
         },
         {
           "ext": "mermaid",
           "name": "Mermaid Diagram",
           "description": "Mermaid Diagram File",
-          "icon": "file-icon.png",
           "role": "Viewer"
         },
         {
           "ext": "ow",
           "name": "OmniWare Wireframe",
           "description": "OmniWare Wireframe File",
-          "icon": "file-icon.png",
           "role": "Viewer"
         }
       ]
