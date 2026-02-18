@@ -2853,9 +2853,11 @@ async function renderMarkdownFull(content, generation) {
 
   // Replace slider placeholders with slider HTML
   sliderBlocks.forEach(({ placeholder, images }) => {
+    const zoomBtnHtml = `<button class="img-zoom-btn" title="Zoom"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>`;
     const slidesHtml = images.map((img, i) =>
       `<div class="slider-slide${i === 0 ? ' active' : ''}" data-index="${i}">
         <img src="${img.src}" alt="${img.alt || ''}">
+        ${zoomBtnHtml}
       </div>`
     ).join('');
     const dotsHtml = images.map((_, i) =>
@@ -2868,7 +2870,6 @@ async function renderMarkdownFull(content, generation) {
       <div class="slider-footer">
         <div class="slider-dots">${dotsHtml}</div>
         <span class="slider-counter">1 / ${images.length}</span>
-        <button class="slider-zoom-btn" title="Zoom">&#9974;</button>
       </div>
     </div>`;
     // Use a regex to handle the placeholder that may be wrapped in <p> by marked
@@ -3081,7 +3082,6 @@ function initSliders() {
     const counter = slider.querySelector('.slider-counter');
     const prevBtn = slider.querySelector('.slider-prev');
     const nextBtn = slider.querySelector('.slider-next');
-    const zoomBtn = slider.querySelector('.slider-zoom-btn');
     const total = slides.length;
     let current = 0;
     let autoPlayTimer = null;
@@ -3129,18 +3129,21 @@ function initSliders() {
     slider.addEventListener('mouseenter', stopAutoPlay);
     slider.addEventListener('mouseleave', startAutoPlay);
 
-    // Zoom button — open active slide image in popup
-    zoomBtn && zoomBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const activeImg = slides[current].querySelector('img');
-      if (activeImg) {
-        const overlay = document.createElement('div');
-        overlay.className = 'slider-zoom-overlay';
-        overlay.innerHTML = `<img src="${activeImg.src}" alt="${activeImg.alt}"><button class="slider-zoom-close">&times;</button>`;
-        overlay.querySelector('.slider-zoom-close').addEventListener('click', () => overlay.remove());
-        overlay.addEventListener('click', (ev) => { if (ev.target === overlay) overlay.remove(); });
-        document.body.appendChild(overlay);
-      }
+    // Per-slide zoom button — open image in popup (same as regular image zoom)
+    slides.forEach(slide => {
+      const zoomBtn = slide.querySelector('.img-zoom-btn');
+      if (!zoomBtn) return;
+      zoomBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const img = slide.querySelector('img');
+        if (img) {
+          ipcRenderer.send('open-image-popup', {
+            src: img.src,
+            alt: img.alt || '',
+            isDarkMode: document.body.classList.contains('dark-mode')
+          });
+        }
+      });
     });
 
     startAutoPlay();
@@ -3641,6 +3644,7 @@ let savedSelection = null;
 let savedSelectionHtml = null;
 let savedSelectionOccurrence = 0;
 let rightClickTarget = null;
+let pendingSliderImageAdd = false; // flag: image dialog opened by "Add to Slider", not "Insert Image"
 let rightClickY = 0;
 let rightClickX = 0;
 let rightClickCaretInfo = null;
@@ -5220,6 +5224,7 @@ ctxInsertImage.addEventListener('click', () => {
     showNotification(i18n('notif.openFileFirst'), 2000);
     return;
   }
+  pendingSliderImageAdd = false;
   ipcRenderer.send('open-image-dialog');
 });
 
@@ -5391,7 +5396,59 @@ function insertImageMarkdown(imageMarkdown, originalSize, compressedSize) {
       renderMarkdown(markdownEditor.value);
     }, PREVIEW_DEBOUNCE_DELAY);
   } else {
-    // View mode: insert after the clicked element's position in markdown
+    // View mode: if right-clicked on a data-URI image, create/extend a slider
+    const clickedImg = rightClickTarget && (
+      rightClickTarget.tagName === 'IMG' ? rightClickTarget : rightClickTarget.closest?.('img')
+    );
+    if (clickedImg && clickedImg.src && clickedImg.src.startsWith('data:')) {
+      const altText = clickedImg.alt || '';
+      const srcPrefix = clickedImg.src.substring(0, 50);
+      const searchStart = `![${altText}](${srcPrefix}`;
+      const content = originalMarkdown;
+      const imgIdx = content.indexOf(searchStart);
+      if (imgIdx !== -1) {
+        const imgEndIdx = content.indexOf(')', imgIdx + searchStart.length);
+        if (imgEndIdx !== -1) {
+          const beforeImg = content.substring(0, imgIdx);
+          const afterImg = content.substring(imgEndIdx + 1);
+          const lastSliderStart = beforeImg.lastIndexOf('<!-- slider-start -->');
+          const lastSliderEndBeforeImg = beforeImg.lastIndexOf('<!-- slider-end -->');
+
+          if (lastSliderStart !== -1 && lastSliderStart > lastSliderEndBeforeImg) {
+            // Image is already in a slider — add the new image inside it
+            const sliderEndAfter = afterImg.indexOf('<!-- slider-end -->');
+            if (sliderEndAfter !== -1) {
+              const sliderContent = content.substring(lastSliderStart, imgEndIdx + 1 + sliderEndAfter + '<!-- slider-end -->'.length);
+              const existingImages = (sliderContent.match(/!\[[^\]]*\]\([^)]+\)/g) || []);
+              if (existingImages.length >= 5) {
+                showNotification(i18n('ctx.addToSlider') + ': max 5 images', 2000);
+                return;
+              }
+              applySliderImageAdd(imageMarkdown, imgEndIdx + 1);
+              return;
+            }
+          } else {
+            // Image is NOT in a slider — wrap both in a new slider block
+            historyPush(originalMarkdown);
+            const fullImgMd = content.substring(imgIdx, imgEndIdx + 1);
+            const newContent = content.substring(0, imgIdx)
+              + '<!-- slider-start -->\n' + fullImgMd + '\n' + imageMarkdown + '\n<!-- slider-end -->'
+              + content.substring(imgEndIdx + 1);
+            const scrollPosition = contentWrapper.scrollTop;
+            originalMarkdown = newContent;
+            invalidateTranslationCache();
+            renderMarkdown(originalMarkdown, 'full').then(() => {
+              contentWrapper.scrollTop = scrollPosition;
+            });
+            hasUnsavedChanges = true;
+            showNotification('Slider created', 1500);
+            return;
+          }
+        }
+      }
+    }
+
+    // Standard insert: place after the clicked element's position in markdown
     const scrollPosition = contentWrapper.scrollTop;
     const activeContent = getActiveMarkdown();
     const insertPos = getMarkdownInsertPosition();
@@ -5417,6 +5474,11 @@ function insertImageMarkdown(imageMarkdown, originalSize, compressedSize) {
 
 // Handle image selected from main process
 ipcRenderer.on('image-selected', (event, data) => {
+  // If the dialog was opened by "Add to Slider", skip here — handled by the once() listener
+  if (pendingSliderImageAdd) {
+    pendingSliderImageAdd = false;
+    return;
+  }
   if (data.error) {
     showNotification(i18n('notif.imageFailed') + data.error, 3000);
     return;
@@ -5625,6 +5687,7 @@ ctxAddToSlider && ctxAddToSlider.addEventListener('click', () => {
         return;
       }
       // Open image dialog to add a new image to this slider
+      pendingSliderImageAdd = true;
       ipcRenderer.send('open-image-dialog');
       // We'll insert the new image right after the current one
       ipcRenderer.once('image-selected', (event, data) => {
