@@ -1594,7 +1594,7 @@ ipcMain.on('open-table-popup', (event, data) => {
 
         // Export functions
         function exportCSV() {
-            table.download("csv", "table-export.csv");
+            table.download("csv", "table-export.csv", {bom: true});
         }
 
         function exportJSON() {

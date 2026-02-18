@@ -2650,25 +2650,25 @@ body.dark-mode .context-menu {
    ============================================ */
 
 .mermaid-template-dialog {
-  max-width: 620px;
-  width: 90vw;
+  max-width: 960px;
+  width: 92vw;
 }
 
 .mermaid-template-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
   margin-bottom: 14px;
 }
 
 .mermaid-tpl-btn {
-  padding: 8px 6px;
+  padding: 7px 4px;
   border: 1px solid var(--border-color);
   background: var(--bg-secondary);
   color: var(--text-primary);
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   text-align: center;
   transition: all 0.15s;
@@ -2679,6 +2679,55 @@ body.dark-mode .context-menu {
   border-color: var(--primary-color);
   background: var(--primary-color);
   color: #fff;
+}
+
+.mermaid-template-split {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.mermaid-template-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mermaid-template-preview-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mermaid-template-preview {
+  min-height: 220px;
+  max-height: 340px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaid-template-preview svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-preview-placeholder,
+.mermaid-preview-error {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.mermaid-preview-error {
+  color: #e74c3c;
 }
 
 .mermaid-template-code {
