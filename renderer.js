@@ -2876,7 +2876,8 @@ async function renderMarkdownFull(content, generation) {
 
   // Replace placeholders with mermaid divs
   mermaidBlocks.forEach(({ placeholder, code }) => {
-    const mermaidDiv = `<pre class="mermaid">${code}</pre>`;
+    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const mermaidDiv = `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`;
     html = html.replace(placeholder, mermaidDiv);
   });
 
@@ -5239,7 +5240,25 @@ function getInsertPositionForLabel() {
   return getMarkdownInsertPosition();
 }
 
+// Build an array of {start, end} positions for each marked.js top-level token in md
+function getTokenPositions(md) {
+  let tokens;
+  try { tokens = marked.lexer(md); } catch (e) { return []; }
+  const positions = [];
+  let scanPos = 0;
+  for (const token of tokens) {
+    const raw = token.raw;
+    if (!raw) continue;
+    const idx = md.indexOf(raw, scanPos);
+    if (idx === -1) continue;
+    positions.push({ start: idx, end: idx + raw.length });
+    scanPos = idx + raw.length;
+  }
+  return positions;
+}
+
 // Find insertion position in markdown based on right-click Y coordinate (view mode)
+// Uses marked.js token positions for accurate DOM-child → markdown-block mapping.
 function getMarkdownInsertPosition() {
   const md = getActiveMarkdown();
   if (!md) return 0;
@@ -5247,28 +5266,60 @@ function getMarkdownInsertPosition() {
   const children = Array.from(viewer.children);
   if (children.length === 0) return md.length;
 
-  // Find which viewer child element is at the right-click Y position
-  let targetIndex = children.length - 1;
+  // Find which viewer child element is at (or just below) the right-click Y position
+  let targetChildIndex = children.length - 1;
   for (let i = 0; i < children.length; i++) {
     const rect = children[i].getBoundingClientRect();
     if (rect.bottom >= rightClickY) {
-      targetIndex = i;
+      targetChildIndex = i;
       break;
     }
   }
 
-  // Split markdown into blocks by double newline
-  const blocks = md.split(/\n\n/);
-  const blockIndex = Math.min(targetIndex, blocks.length - 1);
-
-  // Calculate character position: sum of all blocks up to and including blockIndex
-  let pos = 0;
-  for (let i = 0; i <= blockIndex; i++) {
-    pos += blocks[i].length;
-    if (i < blocks.length - 1) pos += 2; // +2 for the \n\n separator
+  // Map DOM child index → markdown token end position
+  const tokenPositions = getTokenPositions(md);
+  if (tokenPositions.length > 0) {
+    const tokenIndex = Math.min(targetChildIndex, tokenPositions.length - 1);
+    return tokenPositions[tokenIndex].end;
   }
 
-  return pos;
+  // Fallback: proportional Y-coordinate
+  const viewerRect = viewer.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (rightClickY - viewerRect.top) / viewerRect.height));
+  return Math.floor(ratio * md.length);
+}
+
+// Find block-level insertion position for mermaid/table inserts.
+// Priority: (1) marked lexer token positions via DOM child index,
+//           (2) proportional Y-coordinate fallback.
+function getBlockInsertPosition() {
+  const md = getActiveMarkdown();
+  if (!md) return 0;
+
+  const children = Array.from(viewer.children);
+  if (children.length === 0) return md.length;
+
+  // Find which viewer child is at the right-click Y
+  let targetChildIndex = children.length - 1;
+  for (let i = 0; i < children.length; i++) {
+    const rect = children[i].getBoundingClientRect();
+    if (rect.bottom >= rightClickY) {
+      targetChildIndex = i;
+      break;
+    }
+  }
+
+  // Use marked.js token positions for accurate mapping
+  const tokenPositions = getTokenPositions(md);
+  if (tokenPositions.length > 0) {
+    const tokenIndex = Math.min(targetChildIndex, tokenPositions.length - 1);
+    return tokenPositions[tokenIndex].end;
+  }
+
+  // Fallback
+  const viewerRect = viewer.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (rightClickY - viewerRect.top) / viewerRect.height));
+  return Math.floor(ratio * md.length);
 }
 
 // Format byte size to human readable string
@@ -5640,11 +5691,14 @@ ctxInsertTable && ctxInsertTable.addEventListener('click', () => {
 // Delete Mermaid — remove mermaid block from source
 ctxDeleteMermaid && ctxDeleteMermaid.addEventListener('click', () => {
   hideContextMenu();
-  if (!rightClickTarget || !currentFilePath) return;
+  if (!rightClickTarget) return;
 
   const mermaidEl = rightClickTarget.closest('.mermaid-container')?.querySelector('.mermaid')
     || rightClickTarget.closest('.mermaid');
-  if (!mermaidEl) return;
+  if (!mermaidEl) {
+    showNotification('Could not find mermaid element', 2000);
+    return;
+  }
 
   // Collect text samples from the SVG to identify the block
   const svgTexts = [];
@@ -5674,30 +5728,42 @@ function deleteMermaidFromSource(svgTexts, mermaidEl) {
   if (blocks.length === 1) {
     bestBlock = blocks[0];
   } else {
-    // Match by text samples — find block with most matches
-    let bestScore = -1;
-    for (const block of blocks) {
-      const blockLower = block.code.toLowerCase();
-      let score = 0;
-      // For pie charts, check quoted values
-      const pieQuotedRegex = /"([^"]+)"/g;
-      const pieMatches = [...block.code.matchAll(pieQuotedRegex)].map(x => x[1]);
-      for (const sample of svgTexts.slice(0, 5)) {
-        const sLower = sample.toLowerCase();
-        if (blockLower.includes(sLower)) score++;
-        // Pie chart matching: match quoted strings
-        if (pieMatches.some(pm => pm.toLowerCase() === sLower)) score += 2;
-      }
-      if (score > bestScore) { bestScore = score; bestBlock = block; }
+    // Priority 1: match via data-mermaid-src attribute (exact source code stored at render time)
+    const srcCode = mermaidEl?.dataset?.mermaidSrc?.trim();
+    if (srcCode) {
+      bestBlock = blocks.find(b => b.code.trim() === srcCode) || null;
     }
-    // Require at least 2/5 matches for safety
-    if (bestScore < 2 && blocks.length > 1) {
-      showNotification('Could not uniquely identify mermaid block', 2000);
-      return;
+
+    // Priority 2: text-sample scoring (SVG text nodes vs source code)
+    if (!bestBlock) {
+      let bestScore = -1;
+      for (const block of blocks) {
+        const blockLower = block.code.toLowerCase();
+        let score = 0;
+        const pieMatches = [...block.code.matchAll(/"([^"]+)"/g)].map(x => x[1]);
+        for (const sample of svgTexts.slice(0, 8)) {
+          const sLower = sample.toLowerCase().replace(/[\d.%]+/g, '').trim();
+          if (sLower.length >= 2 && blockLower.includes(sLower)) score++;
+          if (pieMatches.some(pm => pm.toLowerCase() === sample.toLowerCase())) score += 3;
+        }
+        if (score > bestScore) { bestScore = score; bestBlock = block; }
+      }
+      if (bestScore < 1) {
+        showNotification('Could not uniquely identify mermaid block', 2000);
+        return;
+      }
     }
   }
 
   if (!bestBlock) return;
+
+  // Remove from DOM directly (no full re-render)
+  const container = mermaidEl?.closest('.mermaid-container') || mermaidEl?.parentElement;
+  if (container && container.parentElement) {
+    container.parentElement.removeChild(container);
+  }
+
+  // Update source
   let removeStart = bestBlock.start;
   let removeEnd = bestBlock.end;
   if (removeStart > 0 && content[removeStart - 1] === '\n') removeStart--;
@@ -5707,43 +5773,53 @@ function deleteMermaidFromSource(svgTexts, mermaidEl) {
   originalMarkdown = content.substring(0, removeStart) + content.substring(removeEnd);
   invalidateTranslationCache();
   syncEditorWithStore();
-  renderMarkdown(originalMarkdown, 'full');
   showNotification('Mermaid diagram deleted', 1500);
 }
 
 // Delete Table — remove markdown table from source
 ctxDeleteTable && ctxDeleteTable.addEventListener('click', () => {
   hideContextMenu();
-  if (!rightClickTarget || !currentFilePath) return;
+  if (!rightClickTarget) return;
 
   const tableEl = rightClickTarget.closest('table');
-  if (!tableEl) return;
+  if (!tableEl) {
+    showNotification('Could not find table element', 2000);
+    return;
+  }
 
-  // Collect header cell texts for matching
+  // Collect all cell texts (header + body) for matching
   const headers = [];
   tableEl.querySelectorAll('th').forEach(th => {
     const t = th.textContent.trim();
     if (t) headers.push(t);
   });
+  const cellTexts = [];
+  tableEl.querySelectorAll('td').forEach(td => {
+    const t = td.textContent.trim();
+    if (t) cellTexts.push(t);
+  });
 
-  deleteTableFromSource(headers);
+  deleteTableFromSource(tableEl, headers, cellTexts);
 });
 
-function deleteTableFromSource(headers) {
+function deleteTableFromSource(tableEl, headers, cellTexts = []) {
   const content = originalMarkdown;
-  // Find markdown tables: lines starting with |
-  const tableRegex = /(\|[^\n]+\|\n)+/g;
+  // Match markdown table rows: lines starting with | (last \n optional for end-of-file)
+  const tableRegex = /(\|[^\n]+\|[ \t]*\n)+\|[^\n]+\|[ \t]*(?:\n|$)/g;
   let m;
   let bestMatch = null;
   let bestScore = -1;
 
   while ((m = tableRegex.exec(content)) !== null) {
     const tableText = m[0];
-    // Check first line (header row) for matching headers
-    const firstLine = tableText.split('\n')[0];
+    const lines = tableText.split('\n').filter(l => l.trim());
+    const firstLine = lines[0] || '';
     let score = 0;
     for (const h of headers) {
-      if (firstLine.includes(h)) score++;
+      if (firstLine.includes(h)) score += 2;
+    }
+    for (const c of cellTexts.slice(0, 6)) {
+      if (tableText.includes(c)) score++;
     }
     if (score > bestScore) {
       bestScore = score;
@@ -5751,20 +5827,26 @@ function deleteTableFromSource(headers) {
     }
   }
 
-  if (!bestMatch || bestScore === 0) {
+  if (!bestMatch) {
     showNotification('Could not find table in source', 2000);
     return;
   }
 
+  // Remove from DOM directly (no full re-render)
+  if (tableEl && tableEl.parentElement) {
+    tableEl.parentElement.removeChild(tableEl);
+  }
+
+  // Update source
   let removeStart = bestMatch.start;
   let removeEnd = bestMatch.end;
   if (removeStart > 0 && content[removeStart - 1] === '\n') removeStart--;
+  if (removeEnd < content.length && content[removeEnd] === '\n') removeEnd++;
 
   historyPush(originalMarkdown);
   originalMarkdown = content.substring(0, removeStart) + content.substring(removeEnd);
   invalidateTranslationCache();
   syncEditorWithStore();
-  renderMarkdown(originalMarkdown, 'full');
   showNotification('Table deleted', 1500);
 }
 
@@ -6019,7 +6101,7 @@ function insertContentAtCursor(content) {
     // View mode: insert at position determined by right-click location in markdown
     const scrollPosition = contentWrapper.scrollTop;
     const activeContent = getActiveMarkdown();
-    const insertPos = skipPastCodeBlock(activeContent, getMarkdownInsertPosition());
+    const insertPos = skipPastCodeBlock(activeContent, getBlockInsertPosition());
     const before = activeContent.substring(0, insertPos);
     const after = activeContent.substring(insertPos);
     const newContent = before + content + after;

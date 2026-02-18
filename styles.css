@@ -566,6 +566,7 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
   line-height: 1.8;
   overflow-y: auto;
   position: relative;
+  min-height: 100%;
 }
 
 .markdown-body {
