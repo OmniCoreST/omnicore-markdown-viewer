@@ -7012,3 +7012,46 @@ ctxNotesPanelDelete.addEventListener('click', () => {
   // Refresh the notes list
   updateNotesList();
 });
+
+// ============================================
+// WELCOME SCREEN SLIDER
+// ============================================
+
+(function initWelcomeSlider() {
+  const track = document.getElementById('welcomeSlidesTrack');
+  const dotsContainer = document.getElementById('welcomeDots');
+  if (!track || !dotsContainer) return;
+
+  const slides = track.querySelectorAll('.welcome-slide');
+  const dots = dotsContainer.querySelectorAll('.welcome-dot');
+  let current = 0;
+  let timer = null;
+
+  function goTo(idx) {
+    slides[current].classList.remove('active');
+    dots[current].classList.remove('active');
+    current = (idx + slides.length) % slides.length;
+    slides[current].classList.add('active');
+    dots[current].classList.add('active');
+  }
+
+  function resetTimer() {
+    clearInterval(timer);
+    timer = setInterval(() => goTo(current + 1), 5000);
+  }
+
+  dots.forEach((dot, i) => {
+    dot.addEventListener('click', () => { goTo(i); resetTimer(); });
+  });
+
+  resetTimer();
+})();
+
+// Set welcome version from app
+(async function setWelcomeVersion() {
+  try {
+    const version = await ipcRenderer.invoke('get-version');
+    const el = document.getElementById('welcomeVersion');
+    if (el && version) el.textContent = 'v' + version;
+  } catch (e) {}
+})();

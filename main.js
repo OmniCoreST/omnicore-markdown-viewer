@@ -2092,6 +2092,9 @@ if (autoUpdater) {
   });
 }
 
+// Return current app version to renderer
+ipcMain.handle('get-version', () => app.getVersion());
+
 // IPC handlers for update actions
 ipcMain.on('check-for-updates', () => {
   log('Manual update check requested');
