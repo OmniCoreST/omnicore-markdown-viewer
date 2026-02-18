@@ -2739,6 +2739,7 @@ async function renderLightFormat(content, generation) {
   viewer.innerHTML = html;
   applyNoteStyles();
   addTableMaximizeButtons();
+  initImageZoom();
   buildTableOfContents();
   updateShowNotesToggleVisibility();
   updateNotesList();
@@ -3020,8 +3021,11 @@ async function renderMarkdownFull(content, generation) {
     // Add maximize buttons to tables
     addTableMaximizeButtons();
 
-    // Initialize image sliders
+    // Initialize image sliders (must run before initImageZoom so slider imgs are wrapped)
     initSliders();
+
+    // Initialize image zoom buttons (after sliders so .slider-slide imgs are excluded)
+    initImageZoom();
 
     // Build table of contents
     buildTableOfContents();
@@ -3195,6 +3199,38 @@ function addTableMaximizeButtons() {
     table.parentNode.insertBefore(container, table);
     container.appendChild(table);
     container.appendChild(maxBtn);
+  });
+}
+
+// Wrap standalone images with a zoom button (skips slider images)
+function initImageZoom() {
+  const imgs = viewer.querySelectorAll(
+    '.markdown-body img:not(.slider-slide img), #viewer img:not(.slider-slide img)'
+  );
+
+  imgs.forEach(img => {
+    if (img.parentNode.classList?.contains('img-zoom-container')) return;
+
+    const container = document.createElement('div');
+    container.className = 'img-zoom-container';
+
+    const btn = document.createElement('button');
+    btn.className = 'img-zoom-btn';
+    btn.title = 'Zoom image';
+    btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>`;
+
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      ipcRenderer.send('open-image-popup', {
+        src: img.src,
+        alt: img.alt || '',
+        isDarkMode: document.body.classList.contains('dark-mode')
+      });
+    });
+
+    img.parentNode.insertBefore(container, img);
+    container.appendChild(img);
+    container.appendChild(btn);
   });
 }
 

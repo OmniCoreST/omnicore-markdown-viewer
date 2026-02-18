@@ -1317,6 +1317,276 @@ ipcMain.on('open-omniware-popup', (event, data) => {
   });
 });
 
+// Handle Image popup request
+ipcMain.on('open-image-popup', (event, data) => {
+  const { src, alt, isDarkMode } = data;
+
+  const title = alt ? `Image — ${alt}` : 'Image Viewer';
+  const popupWindow = new BrowserWindow({
+    width: 1200,
+    height: 900,
+    backgroundColor: isDarkMode ? '#1a1a1a' : '#f0f0f0',
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    },
+    title,
+    icon: path.join(__dirname, 'logo.ico')
+  });
+
+  popupWindow.setMenu(null);
+
+  const tempHtmlPath = path.join(os.tmpdir(), 'omnicore-temp-image.html');
+  const bg = isDarkMode ? '#1a1a1a' : '#f0f0f0';
+  const uiBg = isDarkMode ? '#2d2d2d' : '#ffffff';
+  const uiBorder = isDarkMode ? '#404040' : 'transparent';
+  const textColor = isDarkMode ? '#e0e0e0' : '#333';
+  const accentColor = isDarkMode ? '#3DBDC6' : '#279EA7';
+  const accentHover = isDarkMode ? '#4FCDD6' : '#1f8089';
+  const subTextColor = isDarkMode ? '#a0a0a0' : '#666';
+
+  const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${alt || 'Image Viewer'}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: ${bg};
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    #canvas {
+      width: 100%; height: 100%;
+      cursor: grab;
+      overflow: hidden;
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #canvas:active { cursor: grabbing; }
+    #viewport {
+      will-change: transform;
+      transform-origin: 0 0;
+    }
+    #viewport img {
+      display: block;
+      max-width: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .ui-overlay {
+      position: absolute;
+      top: 20px; left: 20px;
+      background: ${uiBg};
+      border: 1px solid ${uiBorder};
+      padding: 14px 16px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0,0,0,${isDarkMode ? '0.4' : '0.12'});
+      z-index: 10;
+      min-width: 160px;
+    }
+    .ui-overlay h1 {
+      font-size: 14px;
+      font-weight: 600;
+      color: ${accentColor};
+      margin-bottom: 6px;
+    }
+    .ui-overlay p {
+      font-size: 11px;
+      color: ${subTextColor};
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }
+    .ui-overlay button {
+      display: block;
+      width: 100%;
+      padding: 7px 10px;
+      margin-bottom: 6px;
+      background: ${accentColor};
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.18s;
+    }
+    .ui-overlay button:last-child { margin-bottom: 0; }
+    .ui-overlay button:hover { background: ${accentHover}; }
+    .ui-overlay button:disabled { opacity: 0.55; cursor: not-allowed; background: ${accentColor}; }
+    #zoom-label {
+      display: block;
+      text-align: center;
+      font-size: 12px;
+      color: ${textColor};
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .btn-secondary {
+      background: ${isDarkMode ? '#3a3a3a' : '#e8e8e8'} !important;
+      color: ${isDarkMode ? '#e0e0e0' : '#444'} !important;
+    }
+    .btn-secondary:hover { background: ${isDarkMode ? '#4a4a4a' : '#d4d4d4'} !important; }
+    .divider {
+      border: none;
+      border-top: 1px solid ${isDarkMode ? '#404040' : '#e0e0e0'};
+      margin: 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="ui-overlay">
+    <h1>Image Viewer</h1>
+    <p>• Scroll to zoom (at cursor)<br>• Drag to pan</p>
+    <span id="zoom-label">100%</span>
+    <button onclick="resetView()">Reset View</button>
+    <hr class="divider">
+    <button id="btn-png" class="btn-secondary" onclick="saveImage('png')">⬇ Save as PNG</button>
+    <button id="btn-jpg" class="btn-secondary" onclick="saveImage('jpeg')">⬇ Save as JPG</button>
+  </div>
+  <div id="canvas">
+    <div id="viewport">
+      <img id="the-img" src="${src}" alt="${alt || ''}">
+    </div>
+  </div>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const viewport = document.getElementById('viewport');
+    const theImg = document.getElementById('the-img');
+    const zoomLabel = document.getElementById('zoom-label');
+
+    let state = { scale: 1, panning: false, pointX: 0, pointY: 0, startX: 0, startY: 0 };
+    const MIN_SCALE = 0.05, MAX_SCALE = 20, ZOOM_SPEED = 0.12;
+
+    function updateTransform() {
+      viewport.style.transform = \`translate(\${state.pointX}px, \${state.pointY}px) scale(\${state.scale})\`;
+      zoomLabel.textContent = Math.round(state.scale * 100) + '%';
+    }
+
+    // Fit image to window on load
+    theImg.onload = function() {
+      const cw = canvas.clientWidth, ch = canvas.clientHeight;
+      const iw = theImg.naturalWidth, ih = theImg.naturalHeight;
+      const scale = Math.min(cw * 0.9 / iw, ch * 0.9 / ih, 1);
+      state.scale = scale;
+      state.pointX = (cw - iw * scale) / 2;
+      state.pointY = (ch - ih * scale) / 2;
+      updateTransform();
+    };
+
+    // Wheel zoom toward cursor
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const delta = -Math.sign(e.deltaY);
+      const factor = 1 + ZOOM_SPEED * delta;
+      let newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.scale * factor));
+      const ratio = newScale / state.scale;
+      state.pointX = mouseX - (mouseX - state.pointX) * ratio;
+      state.pointY = mouseY - (mouseY - state.pointY) * ratio;
+      state.scale = newScale;
+      updateTransform();
+    }, { passive: false });
+
+    // Pan
+    canvas.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      state.panning = true;
+      state.startX = e.clientX - state.pointX;
+      state.startY = e.clientY - state.pointY;
+    });
+    window.addEventListener('mousemove', e => {
+      if (!state.panning) return;
+      e.preventDefault();
+      state.pointX = e.clientX - state.startX;
+      state.pointY = e.clientY - state.startY;
+      updateTransform();
+    });
+    window.addEventListener('mouseup', () => { state.panning = false; });
+
+    window.resetView = function() {
+      const cw = canvas.clientWidth, ch = canvas.clientHeight;
+      const iw = theImg.naturalWidth, ih = theImg.naturalHeight;
+      const scale = Math.min(cw * 0.9 / iw, ch * 0.9 / ih, 1);
+      state = { scale, panning: false, pointX: (cw - iw * scale) / 2, pointY: (ch - ih * scale) / 2, startX: 0, startY: 0 };
+      updateTransform();
+    };
+
+    window.saveImage = function(format) {
+      const { ipcRenderer } = require('electron');
+      const btnId = format === 'jpeg' ? 'btn-jpg' : 'btn-png';
+      const btn = document.getElementById(btnId);
+      const origText = btn.textContent;
+      btn.textContent = 'Saving…';
+      btn.disabled = true;
+
+      const offscreen = document.createElement('canvas');
+      offscreen.width = theImg.naturalWidth;
+      offscreen.height = theImg.naturalHeight;
+      const ctx = offscreen.getContext('2d');
+      if (format === 'jpeg') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, offscreen.width, offscreen.height);
+      }
+      ctx.drawImage(theImg, 0, 0);
+      const dataUrl = offscreen.toDataURL(format === 'jpeg' ? 'image/jpeg' : 'image/png', 0.95);
+
+      ipcRenderer.send('image-popup-save', { dataUrl, format });
+      ipcRenderer.once('image-popup-save-result', (_, result) => {
+        if (result.success) {
+          btn.textContent = 'Saved!';
+          setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 1500);
+        } else if (result.canceled) {
+          btn.textContent = origText;
+          btn.disabled = false;
+        } else {
+          btn.textContent = 'Error!';
+          setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 1500);
+        }
+      });
+    };
+  </script>
+</body>
+</html>`;
+
+  fs.writeFileSync(tempHtmlPath, htmlContent, 'utf8');
+  popupWindow.loadFile(tempHtmlPath);
+  popupWindow.on('closed', () => {
+    try { fs.unlinkSync(tempHtmlPath); } catch (e) { /* ignore */ }
+  });
+});
+
+// Handle image save request from image popup
+ipcMain.on('image-popup-save', async (event, { dataUrl, format }) => {
+  const ext = format === 'jpeg' ? 'jpg' : 'png';
+  const filterName = format === 'jpeg' ? 'JPEG Image' : 'PNG Image';
+  const win = BrowserWindow.fromWebContents(event.sender);
+
+  try {
+    const result = await dialog.showSaveDialog(win, {
+      defaultPath: `image.${ext}`,
+      filters: [{ name: filterName, extensions: [ext] }]
+    });
+
+    if (result.canceled) {
+      event.reply('image-popup-save-result', { canceled: true });
+      return;
+    }
+
+    const base64 = dataUrl.split(',')[1];
+    const buffer = Buffer.from(base64, 'base64');
+    fs.writeFileSync(result.filePath, buffer);
+    event.reply('image-popup-save-result', { success: true });
+  } catch (err) {
+    event.reply('image-popup-save-result', { success: false, error: err.message });
+  }
+});
+
 // Handle Table popup request
 ipcMain.on('open-table-popup', (event, data) => {
   const { tableData, isDarkMode } = data;
