@@ -9,14 +9,18 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Electron](https://img.shields.io/badge/Electron-27.0-blue)
 
-## What's New in v1.9.0
+## What's New in v2.0.0
 
-- **Robust Note Styling** - Notes now display with colored background highlight and colored underline, applied reliably regardless of sanitization
-- **Complete Note Hiding** - Hidden notes are fully invisible: no background, no underline, no tooltip on hover/click, text appears completely normal
-- **File/View/Tools Dropdown Menus** - Organized menu bar with File, View, and Tools dropdowns
-- **All Notes Panel** - Side panel listing all notes with search and navigation
-- **Inline Text Editing** - Right-click selected text to edit in place with partial DOM rendering
-- **Partial Rendering** - Edits re-render only affected sections, no full page refresh
+- **Image Slider** - Embed auto-playing image carousels with `<!-- slider-start/end -->` syntax; per-slide zoom popup
+- **Mermaid Template Dialog** - 8 built-in diagram templates, insert or edit via right-click with live preview
+- **Table Insert Dialog** - Configure rows, columns, and header — live preview before inserting
+- **Edit Mermaid / Edit Table** - Right-click any diagram or table to edit it inline (partial DOM patch, no full re-render)
+- **Image Zoom Popup** - Open any image in a dedicated popup window with pan, zoom, and PNG/JPG export
+- **Undo / Redo** - Full undo/redo stack for all view-mode edits (Ctrl+Z / Ctrl+Y)
+- **Instant Dark Mode** - Theme switch no longer re-renders the page; only diagram SVGs are redrawn
+- **Non-Blocking Translation** - Translation runs in the background; keep working while the document translates
+- **OS-level File Watching** - Instant file reload on external changes (replaces 5-second polling)
+- **400ms Editor Debounce** - Preview updates 7× faster than before (was 3 seconds)
 
 ## Features
 
@@ -28,11 +32,40 @@
 - **Interactive Tables** - Tabulator.js integration with sorting, filtering, pagination, and CSV/JSON export
 
 ### Editing & Export
-- **Live Markdown Editor** - Split-view editing with 3-second debounced preview and Fira Code font
-- **Inline Text Editing** - Right-click any selected text to edit it in place with partial rendering (no full page refresh)
+- **Live Markdown Editor** - Split-view editing with fast 400ms debounced preview and Fira Code font
+- **Tab → 2 Spaces** - Tab key inserts 2 spaces in the editor for consistent indentation
+- **Inline Text Editing** - Right-click any selected text to edit it in place with partial DOM rendering
+- **Undo / Redo** - Ctrl+Z / Ctrl+Y undo/redo stack covering all view-mode edits
 - **PDF Export** - One-click export with full styling, diagrams, and syntax highlighting
 - **Word Export** - Export documents as Microsoft Word (.docx) files
 - **Auto-Save Detection** - Unsaved changes indicator with confirmation prompts
+
+### Image Slider
+Create auto-playing image carousels by wrapping images in slider tags:
+
+```markdown
+<!-- slider-start -->
+![Caption 1](image1.png)
+![Caption 2](image2.png)
+![Caption 3](image3.png)
+<!-- slider-end -->
+```
+
+- Auto-plays every 5 seconds, pauses on hover
+- Navigation dots and arrow controls
+- Click any slide to open a zoom popup
+
+### Mermaid & Table Dialogs
+- **Insert Mermaid** - Right-click → Insert Mermaid to open a dialog with 8 diagram templates (flowchart, sequence, class, state, ER, Gantt, pie, mindmap)
+- **Insert Table** - Right-click → Insert Table to configure dimensions and header row with a live preview
+- **Edit Mermaid** - Right-click any diagram to open the editor pre-filled with the current diagram source
+- **Edit Table** - Right-click any table to open the dialog pre-filled for editing
+- **Delete Mermaid / Delete Table** - Remove diagrams or tables via right-click; source is updated without full re-render
+
+### Image Zoom Popup
+- Click the maximize button on any image to open it in a dedicated popup window
+- Pan by clicking and dragging; zoom with the scroll wheel
+- Export the current view as PNG or JPG
 
 ### Note System
 - **Text Notes** - Select any text and add colored notes with background highlight and colored underline
@@ -53,33 +86,46 @@
 - **Auto Table of Contents** - Hierarchical index of all headers (H1-H6) with one-click navigation
 - **Search with Highlighting** - Real-time text search with match counter and keyboard navigation (Ctrl+F)
 - **File Path Display** - Shows current file path with copy-to-clipboard functionality
-
-### View Controls
-- **Dark Mode** - Toggle between light and dark themes
-- **Zoom Controls** - Flexible zoom from 50% to 200% via keyboard shortcuts or mouse wheel
-- **Fullscreen Mode** - Distraction-free viewing (F11)
+- **Instant Dark Mode** - Switches theme without re-rendering the page; Mermaid SVGs are redrawn in-place
 
 ### Translation & Localization
-- **Document Translation** - Translate documents to English or Turkish via Google Translate
+- **Document Translation** - Translate documents to English or Turkish via Google Translate (runs in background, non-blocking)
 - **Interface Language** - Switch UI language between English and Turkish
 - **Dual-source Editing** - Edit documents while viewing translations without switching back
+- **Resilient Translation** - Per-piece fallback: if individual lines fail to translate, the rest of the document still translates
 
 ### Right-Click Context Menu
 - **Copy / Copy as Plain Text**
 - **Edit Text** - Edit selected text inline with partial DOM rendering
-- **Bold / Italic / Code Block / List** - Quick formatting
+- **Bold / Italic / Code Block / List** - Quick inline formatting (DOM patch — no full page re-render)
 - **Remove Formatting** - Strip markdown formatting from selection
 - **Add Note / Edit Note / Delete Note / Find Note** - Full note management
+- **Insert Mermaid / Edit Mermaid / Delete Mermaid** - Diagram management with template dialog
+- **Insert Table / Edit Table / Delete Table** - Table management with live-preview dialog
 - **Insert Image / Delete Image**
+- **Copy Code** - Copy the source of a code block to clipboard
+- **Copy Image Source** - Copy an image's src attribute to clipboard
 - **Select All**
+
+### View Controls
+- **Dark Mode** - Instant toggle between light and dark themes (Ctrl+D)
+- **Zoom Controls** - Flexible zoom from 50% to 200% via keyboard shortcuts or mouse wheel
+- **Fullscreen Mode** - Distraction-free viewing (F11)
+
+### Performance
+- **Partial DOM Rendering** - Bold, italic, code, and formatting changes patch only the affected DOM node — no full page refresh
+- **Instant Dark Mode** - Only Mermaid SVGs are redrawn on theme change; all other styling is CSS-driven
+- **Render Generation Guard** - Stale renders are cancelled automatically when content changes rapidly
+- **Mermaid SVG Cache** - Unchanged diagrams are restored from cache without re-running Mermaid
 
 ### Additional Features
 - **Professional Theme** - Clean interface with Omnicore branding (#279EA7 teal, #1F3244 navy)
 - **Cross-Platform** - Works on Windows, macOS, and Linux
-- **Offline Support** - All libraries bundled locally, no internet required
+- **Offline Support** - All libraries bundled locally, no internet required (except translation)
 - **Single Instance** - Prevents multiple app instances
 - **Toast Notifications** - User-friendly feedback for all operations
 - **Recent Files** - Quick access to last 100 files from File menu
+- **OS-Level File Watching** - Instant reload when the file is modified externally (no polling delay)
 
 ## Installation
 
@@ -147,25 +193,29 @@ This creates both portable exe and installer.
 
 - **Ctrl+O** (Cmd+O on Mac) - Open markdown file
 - **Ctrl+S** (Cmd+S on Mac) - Save file (in edit mode)
+- **Ctrl+Z** - Undo last view-mode edit
+- **Ctrl+Y** - Redo last view-mode edit
 - **Ctrl+F** (Cmd+F on Mac) - Open search panel
 - **Ctrl+B** - Bold selected text
 - **Ctrl+I** - Italic selected text
 - **Ctrl+`** - Code block
-- **Enter** (in search) - Next match
-- **Shift+Enter** (in search) - Previous match
-- **Escape** - Close search panel / Exit dialogs
+- **Ctrl+D** - Toggle dark mode
 - **Ctrl++** - Zoom in
 - **Ctrl+-** - Zoom out
 - **Ctrl+0** - Reset zoom to 100%
-- **Ctrl+Enter** - Save in Edit Text dialog
+- **Ctrl+Enter** - Confirm in Mermaid/Table dialogs and Edit Text dialog
+- **Enter** (in search) - Next match
+- **Shift+Enter** (in search) - Previous match
+- **Escape** - Close search panel / Exit dialogs
 - **F11** - Toggle fullscreen
+- **Tab** (in editor) - Insert 2 spaces
 
 ### Mouse Controls
 
 - **Ctrl+Mouse Wheel** (Cmd+Mouse Wheel on Mac) - Zoom in/out
   - Scroll up to zoom in
   - Scroll down to zoom out
-- **Right-click** - Context menu with formatting, notes, and editing options
+- **Right-click** - Context menu with formatting, notes, diagrams, tables, and editing options
 
 ### Search Features
 
@@ -209,13 +259,31 @@ This creates both portable exe and installer.
 
 ## Mermaid Support
 
-The viewer supports all Mermaid diagram types. Simply use mermaid code blocks:
+The viewer supports all Mermaid diagram types. Use mermaid code blocks or insert via right-click:
 
-\`\`\`mermaid
+````markdown
+```mermaid
 graph TD
     A[Start] --> B[Process]
     B --> C[End]
-\`\`\`
+```
+````
+
+Right-click anywhere in the document and choose **Insert Mermaid** to pick from 8 built-in templates.
+
+## Image Slider
+
+Wrap images between slider tags to create an auto-playing carousel:
+
+```markdown
+<!-- slider-start -->
+![First slide](image1.png)
+![Second slide](image2.png)
+![Third slide](image3.png)
+<!-- slider-end -->
+```
+
+The slider auto-plays every 5 seconds, pauses on hover, and each slide can be opened in a zoom popup.
 
 ## Technology Stack
 
