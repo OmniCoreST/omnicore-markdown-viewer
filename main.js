@@ -2023,8 +2023,8 @@ app.on('window-all-closed', () => {
 
 // Only configure auto-updater if it's available
 // Portable .exe detection: electron-builder sets PORTABLE_EXECUTABLE_DIR for portable builds.
-// Auto-update (quitAndInstall) does not work for portable — redirect to releases page instead.
 const isPortable = !!process.env.PORTABLE_EXECUTABLE_DIR;
+let downloadedUpdatePath = null; // path to downloaded installer, set in update-downloaded event
 
 if (autoUpdater) {
   // Configure auto-updater
@@ -2046,8 +2046,7 @@ if (autoUpdater) {
         status: 'available',
         version: info.version,
         releaseNotes: info.releaseNotes,
-        releaseDate: info.releaseDate,
-        portable: isPortable  // renderer uses this to open browser instead of in-app install
+        releaseDate: info.releaseDate
       });
     }
   });
@@ -2076,7 +2075,8 @@ if (autoUpdater) {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    log('Auto-updater: Update downloaded:', info.version);
+    log('Auto-updater: Update downloaded:', info.version, info.downloadedFile || '');
+    downloadedUpdatePath = info.downloadedFile || null;
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('update-status', {
         status: 'downloaded',
@@ -2091,6 +2091,12 @@ if (autoUpdater) {
     log('Auto-updater error (silent):', err.message);
   });
 }
+
+// Return current app version to renderer
+ipcMain.handle('get-version', () => app.getVersion());
+
+// Return app root path so renderer can construct paths like README.md
+ipcMain.handle('get-app-path', () => app.getAppPath());
 
 // IPC handlers for update actions
 ipcMain.on('check-for-updates', () => {
@@ -2127,7 +2133,28 @@ ipcMain.on('download-update', () => {
 
 ipcMain.on('install-update', () => {
   log('Install update requested');
-  if (autoUpdater && !isPortable) {
+  if (!autoUpdater) return;
+
+  if (isPortable && downloadedUpdatePath) {
+    // Portable .exe: quitAndInstall() doesn't work.
+    // Launch the downloaded NSIS installer via a temp batch script (waits for app to exit first).
+    try {
+      const batchPath = path.join(os.tmpdir(), 'omnicore-update.bat');
+      const batch = [
+        '@echo off',
+        'timeout /t 2 /nobreak > nul',
+        `start "" "${downloadedUpdatePath}"`,
+        'del "%~f0"'
+      ].join('\r\n') + '\r\n';
+      fs.writeFileSync(batchPath, batch, 'utf8');
+      const { exec } = require('child_process');
+      exec(`start /min "" cmd /c "${batchPath}"`);
+      log('Portable update: batch script launched, quitting app');
+      app.quit();
+    } catch (err) {
+      log('Portable update batch failed:', err.message);
+    }
+  } else if (!isPortable) {
     autoUpdater.quitAndInstall(false, true);
   }
 });

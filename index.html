@@ -246,24 +246,113 @@
         <div class="welcome">
           <h1 data-i18n="welcome.title">Welcome to Omnicore Markdown Viewer</h1>
           <p data-i18n="welcome.subtitle">Press Ctrl+O to open a markdown file</p>
-          <div class="features">
-            <h2 data-i18n="welcome.features">Features</h2>
-            <ul>
-              <li>Full HTML support in markdown</li>
-              <li>Mermaid diagrams rendering</li>
-              <li>OmniWare wireframe rendering</li>
-              <li>PrismJS syntax highlighting (offline)</li>
-              <li>Live markdown editor with split-view</li>
-              <li>PDF export with full document support</li>
-              <li>Word (.docx) export</li>
-              <li>Auto-generated Table of Contents</li>
-              <li>Search with highlighting (Ctrl+F)</li>
-              <li>File path display with copy-to-clipboard</li>
-              <li>Zoom controls (50%-200%)</li>
-              <li>Fullscreen mode (F11)</li>
-              <li>Recent files with delete & clear all</li>
-            </ul>
+
+          <!-- Feature Slider -->
+          <div class="welcome-feature-slider">
+            <div class="welcome-slides-track" id="welcomeSlidesTrack">
+
+              <!-- Slide 1: Markdown & Diagrams -->
+              <div class="welcome-slide active">
+                <div class="welcome-slide-icon">
+                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#279EA7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                    <circle cx="6" cy="5" r="0" fill="#279EA7"/>
+                    <path d="M9 9h2l1 4 1-4h2"/>
+                  </svg>
+                </div>
+                <h3 class="welcome-slide-title">Markdown &amp; Diagrams</h3>
+                <p class="welcome-slide-desc">Full HTML · Mermaid diagrams · OmniWare wireframes · PrismJS syntax highlighting</p>
+              </div>
+
+              <!-- Slide 2: Live Editor -->
+              <div class="welcome-slide">
+                <div class="welcome-slide-icon">
+                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#279EA7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="18" rx="2"/>
+                    <line x1="12" y1="3" x2="12" y2="21"/>
+                    <path d="M7 8l-2 3.5 2 3.5"/>
+                    <path d="M17 8l2 3.5-2 3.5"/>
+                    <line x1="15" y1="11.5" x2="17" y2="11.5"/>
+                  </svg>
+                </div>
+                <h3 class="welcome-slide-title">Live Split Editor</h3>
+                <p class="welcome-slide-desc">Real-time preview · 400ms debounce · Undo / Redo · Mermaid &amp; Table dialogs</p>
+              </div>
+
+              <!-- Slide 3: Smart Notes -->
+              <div class="welcome-slide">
+                <div class="welcome-slide-icon">
+                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#279EA7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4L18.5 2.5z"/>
+                    <line x1="3" y1="21" x2="9" y2="21"/>
+                  </svg>
+                </div>
+                <h3 class="welcome-slide-title">Smart Annotations</h3>
+                <p class="welcome-slide-desc">Colored text notes · Image annotations · Floating labels · Searchable note panel</p>
+              </div>
+
+              <!-- Slide 4: Export -->
+              <div class="welcome-slide">
+                <div class="welcome-slide-icon">
+                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#279EA7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                    <rect x="7" y="3" width="10" height="2" rx="1" fill="#279EA7" stroke="none"/>
+                  </svg>
+                </div>
+                <h3 class="welcome-slide-title">Export &amp; Share</h3>
+                <p class="welcome-slide-desc">PDF export · Word (.docx) · Image zoom &amp; export · Document translation</p>
+              </div>
+
+              <!-- Slide 5: Navigation & UI -->
+              <div class="welcome-slide">
+                <div class="welcome-slide-icon">
+                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#279EA7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    <line x1="8" y1="11" x2="14" y2="11"/>
+                    <line x1="11" y1="8" x2="11" y2="14"/>
+                  </svg>
+                </div>
+                <h3 class="welcome-slide-title">Navigation &amp; UI</h3>
+                <p class="welcome-slide-desc">Table of Contents · Full-text search · Dark mode · Zoom 50%–200%</p>
+              </div>
+
+            </div><!-- /.welcome-slides-track -->
+
+            <div class="welcome-dots" id="welcomeDots">
+              <span class="welcome-dot active" data-index="0"></span>
+              <span class="welcome-dot" data-index="1"></span>
+              <span class="welcome-dot" data-index="2"></span>
+              <span class="welcome-dot" data-index="3"></span>
+              <span class="welcome-dot" data-index="4"></span>
+            </div>
+          <!-- Open file / README buttons -->
+          <div class="welcome-btn-group">
+            <button class="welcome-open-btn" id="welcomeOpenBtn">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              <span data-i18n="openFile">Open File</span>
+              <span class="welcome-open-hint">Ctrl+O</span>
+            </button>
+            <button class="welcome-readme-btn" id="welcomeReadmeBtn">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+              </svg>
+              <span>Read README.md</span>
+            </button>
           </div>
+          </div><!-- /.welcome-feature-slider -->
+
+          <!-- Version badge — fixed at bottom-left of window -->
+          <span class="welcome-version" id="welcomeVersion">v2.0.0</span>
         </div>
       </div>
 
