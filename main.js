@@ -405,6 +405,39 @@ ipcMain.on('open-folder-in-explorer', (event, filePath) => {
 // IPC HANDLERS - Export
 // ============================================
 
+// Build corporate letterhead header/footer templates for printToPDF
+function buildCorporateTemplates(label) {
+  const logoPath = path.join(__dirname, 'omnicore-letterhead-logo.png');
+  let logoDataUri = '';
+  try {
+    const logoData = fs.readFileSync(logoPath);
+    logoDataUri = 'data:image/png;base64,' + logoData.toString('base64');
+  } catch (e) {
+    console.warn('Corporate logo not found:', logoPath);
+  }
+  const headerTemplate = `<div style="-webkit-print-color-adjust:exact;color-adjust:exact;width:100%;padding:10px 36px 0 36px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:flex-start;">
+    <img src="${logoDataUri}" style="height:36px;width:auto;display:block;">
+    <span style="font-size:9px;color:#999999;font-family:Arial,sans-serif;padding-top:4px;">${label || ''}</span>
+  </div>`;
+  const footerTemplate = `<div style="-webkit-print-color-adjust:exact;color-adjust:exact;width:100%;height:100%;padding:4px 0 0 36px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:flex-end;font-family:Arial,sans-serif;overflow:visible;">
+    <div style="line-height:1.5;">
+      <div style="font-size:7px;font-weight:bold;font-style:italic;color:#279EA7;">OMNICORE STRATEJİK TEKNOLOJİLER LİMİTED ŞİRKETİ</div>
+      <div style="font-size:6px;color:#1F3244;">KÜÇÜKBAKKALKÖY MAH. SELVİLİ SK. NO: 4 İÇ KAPI NO: 20 ATAŞEHİR</div>
+      <div style="font-size:6px;color:#1F3244;">1074342 / 0642108183700001</div>
+      <div style="font-size:6px;color:#279EA7;">www.omnicore.com.tr</div>
+    </div>
+    <div style="display:flex;align-items:flex-end;gap:22px;overflow:visible;align-self:stretch;">
+      <div style="display:flex;gap:3px;height:70%;align-self:flex-end;margin-bottom:-20px;overflow:visible;">
+        <div style="width:1px;background:#279EA7;"></div>
+        <div style="width:1px;background:#279EA7;"></div>
+        <div style="width:1px;background:#279EA7;"></div>
+      </div>
+      <span class="pageNumber" style="font-size:20px;font-weight:300;color:#1F3244;padding-right:28px;"></span>
+    </div>
+  </div>`;
+  return { headerTemplate, footerTemplate };
+}
+
 // Handle corporate PDF export (with letterhead)
 ipcMain.on('export-pdf-corporate', async (event, data) => {
   try {
@@ -429,36 +462,7 @@ ipcMain.on('export-pdf-corporate', async (event, data) => {
     await new Promise(resolve => ipcMain.once('pdf-export-ready', resolve));
 
     // Build corporate letterhead templates (header/footer appear on every page via Chromium)
-    const logoPath = path.join(__dirname, 'omnicore-letterhead-logo.png');
-    let logoDataUri = '';
-    try {
-      const logoData = fs.readFileSync(logoPath);
-      logoDataUri = 'data:image/png;base64,' + logoData.toString('base64');
-    } catch (e) {
-      console.warn('Corporate logo not found:', logoPath);
-    }
-
-    const headerTemplate = `<div style="-webkit-print-color-adjust:exact;color-adjust:exact;width:100%;padding:10px 36px 0 36px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:flex-start;">
-      <img src="${logoDataUri}" style="height:36px;width:auto;display:block;">
-      <span style="font-size:9px;color:#999999;font-family:Arial,sans-serif;padding-top:4px;">${currentFileName || ''}</span>
-    </div>`;
-
-    const footerTemplate = `<div style="-webkit-print-color-adjust:exact;color-adjust:exact;width:100%;height:100%;padding:4px 0 0 36px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:flex-end;font-family:Arial,sans-serif;overflow:visible;">
-      <div style="line-height:1.5;">
-        <div style="font-size:7px;font-weight:bold;font-style:italic;color:#279EA7;">OMNICORE STRATEJİK TEKNOLOJİLER LİMİTED ŞİRKETİ</div>
-        <div style="font-size:6px;color:#1F3244;">KÜÇÜKBAKKALKÖY MAH. SELVİLİ SK. NO: 4 İÇ KAPI NO: 20 ATAŞEHİR</div>
-        <div style="font-size:6px;color:#1F3244;">1074342 / 0642108183700001</div>
-        <div style="font-size:6px;color:#279EA7;">www.omnicore.com.tr</div>
-      </div>
-      <div style="display:flex;align-items:flex-end;gap:22px;overflow:visible;align-self:stretch;">
-        <div style="display:flex;gap:3px;height:70%;align-self:flex-end;margin-bottom:-20px;overflow:visible;">
-          <div style="width:1px;background:#279EA7;"></div>
-          <div style="width:1px;background:#279EA7;"></div>
-          <div style="width:1px;background:#279EA7;"></div>
-        </div>
-        <span class="pageNumber" style="font-size:20px;font-weight:300;color:#1F3244;padding-right:28px;"></span>
-      </div>
-    </div>`;
+    const { headerTemplate, footerTemplate } = buildCorporateTemplates(currentFileName);
 
     const pdfData = await mainWindow.webContents.printToPDF({
       printBackground: true,
@@ -843,7 +847,7 @@ ipcMain.on('reload-file', (event, data) => {
 // ============================================
 
 ipcMain.on('open-mermaid-popup', (event, data) => {
-  const { svgContent, isDarkMode } = data;
+  const { svgContent, isDarkMode, isCorporateMode } = data;
 
   // Create popup window
   const popupWindow = new BrowserWindow({
@@ -1167,17 +1171,25 @@ ipcMain.on('open-mermaid-popup', (event, data) => {
   });
 
   // Handle PDF export request from this popup window
-  ipcMain.once('mermaid-export-pdf', async (event) => {
+  const mermaidPdfHandler = async (ev) => {
+    if (BrowserWindow.fromWebContents(ev.sender) !== popupWindow) return;
     try {
-      // Generate PDF from current window view
-      const pdfData = await popupWindow.webContents.printToPDF({
+      const printOptions = isCorporateMode ? {
+        printBackground: true,
+        landscape: true,
+        pageSize: 'A4',
+        displayHeaderFooter: true,
+        ...buildCorporateTemplates('mermaid-diagram.pdf'),
+        margins: { top: 1.2, bottom: 1.0, left: 0.8, right: 0.8 }
+      } : {
         printBackground: true,
         landscape: true,
         pageSize: 'A4',
         margins: { top: 0, bottom: 0, left: 0, right: 0 }
-      });
+      };
 
-      // Show save dialog
+      const pdfData = await popupWindow.webContents.printToPDF(printOptions);
+
       const result = await dialog.showSaveDialog(popupWindow, {
         title: 'Save Mermaid Diagram as PDF',
         defaultPath: path.join(os.homedir(), 'mermaid-diagram.pdf'),
@@ -1194,12 +1206,17 @@ ipcMain.on('open-mermaid-popup', (event, data) => {
       console.error('Mermaid PDF export error:', err);
       popupWindow.webContents.send('mermaid-pdf-result', { success: false, error: err.message });
     }
+  };
+  ipcMain.on('mermaid-export-pdf', mermaidPdfHandler);
+
+  popupWindow.on('closed', () => {
+    ipcMain.removeListener('mermaid-export-pdf', mermaidPdfHandler);
   });
 });
 
 // Handle OmniWare wireframe popup request
 ipcMain.on('open-omniware-popup', (event, data) => {
-  const { dslCode, isDarkMode } = data;
+  const { dslCode, isDarkMode, isCorporateMode } = data;
 
   const popupWindow = new BrowserWindow({
     width: 1200,
@@ -1291,7 +1308,9 @@ ipcMain.on('open-omniware-popup', (event, data) => {
   popupWindow.loadFile(tempHtmlPath);
 
   // Handle PDF export from popup
-  ipcMain.once('omniware-export-pdf', async () => {
+  const omniwarePdfHandler = async (event) => {
+    // Only handle events coming from this specific popup window
+    if (BrowserWindow.fromWebContents(event.sender) !== popupWindow) return;
     try {
       const saveResult = await dialog.showSaveDialog(popupWindow, {
         title: 'Export Wireframe as PDF',
@@ -1299,20 +1318,30 @@ ipcMain.on('open-omniware-popup', (event, data) => {
         filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
       });
       if (!saveResult.canceled && saveResult.filePath) {
-        const pdfData = await popupWindow.webContents.printToPDF({
+        const printOptions = isCorporateMode ? {
+          landscape: false,
+          printBackground: true,
+          pageSize: 'A4',
+          displayHeaderFooter: true,
+          ...buildCorporateTemplates('wireframe.pdf'),
+          margins: { top: 1.2, bottom: 1.0, left: 0.8, right: 0.8 }
+        } : {
           landscape: false,
           printBackground: true,
           margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
-        });
+        };
+        const pdfData = await popupWindow.webContents.printToPDF(printOptions);
         fs.writeFileSync(saveResult.filePath, pdfData);
       }
     } catch (err) {
       console.error('OmniWare PDF export error:', err);
     }
-  });
+  };
+  ipcMain.on('omniware-export-pdf', omniwarePdfHandler);
 
-  // Clean up temp file on close
+  // Clean up temp file and listener on close
   popupWindow.on('closed', () => {
+    ipcMain.removeListener('omniware-export-pdf', omniwarePdfHandler);
     try { fs.unlinkSync(tempHtmlPath); } catch (e) { /* ignore */ }
   });
 });

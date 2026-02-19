@@ -2869,12 +2869,41 @@ function renderLightFormat(content, generation) {
     return ph;
   });
 
+  // Extract @@@html blocks
+  const rawHtmlBlocksLF = [];
+  content = content.replace(/@@@html[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, code) => {
+    const ph = `RAWHTML_PH_${rawHtmlBlocksLF.length}`;
+    rawHtmlBlocksLF.push({ ph, code });
+    return ph;
+  });
+
   let html = marked.parse(content);
 
   // Restore mermaid placeholders — patchViewerDOM will keep existing SVGs for same source
   mermaidBlocks.forEach(({ ph, code }) => {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     html = html.replace(ph, `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`);
+  });
+
+  // Restore @@@html placeholders as sandboxed iframes
+  rawHtmlBlocksLF.forEach(({ ph, code }, idx) => {
+    const srcdoc = [
+      '<!DOCTYPE html><html><head>',
+      '<meta charset="UTF-8">',
+      '<style>html,body{margin:0;padding:0;}</style>',
+      '</head><body>',
+      code,
+      '<scr' + 'ipt>',
+      'window.addEventListener("load",function(){',
+      '  function notify(){window.parent.postMessage({type:"omnicore-rawhtml-resize",idx:' + idx + ',h:document.body.scrollHeight},"*");}',
+      '  setTimeout(notify,100);setTimeout(notify,600);setTimeout(notify,1500);',
+      '});',
+      '</scr' + 'ipt>',
+      '</body></html>'
+    ].join('');
+    const escaped = srcdoc.replace(/"/g, '&quot;');
+    const iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
+    html = html.replace(new RegExp(`<p>${ph}</p>|${ph}`), iframeHtml);
   });
 
   // Protect data URIs
@@ -2986,6 +3015,16 @@ async function renderMarkdownFull(content, generation) {
       return placeholder;
     });
 
+    // Extract @@@html blocks and replace with placeholders (bypasses DOMPurify)
+    const rawHtmlBlocks = [];
+    let rawHtmlIndex = 0;
+    content = content.replace(/@@@html[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, code) => {
+      const placeholder = `RAWHTML_PLACEHOLDER_${rawHtmlIndex}`;
+      rawHtmlBlocks.push({ placeholder, code });
+      rawHtmlIndex++;
+      return placeholder;
+    });
+
   // Parse markdown with marked (allows HTML)
   let html = marked.parse(content);
 
@@ -3055,6 +3094,27 @@ async function renderMarkdownFull(content, generation) {
       }
     });
 
+    // Replace @@@html placeholders with sandboxed iframes (allows Tailwind CDN and scripts to run)
+    rawHtmlBlocks.forEach(({ placeholder, code }, idx) => {
+      const srcdoc = [
+        '<!DOCTYPE html><html><head>',
+        '<meta charset="UTF-8">',
+        '<style>html,body{margin:0;padding:0;}</style>',
+        '</head><body>',
+        code,
+        '<scr' + 'ipt>',
+        'window.addEventListener("load",function(){',
+        '  function notify(){window.parent.postMessage({type:"omnicore-rawhtml-resize",idx:' + idx + ',h:document.body.scrollHeight},"*");}',
+        '  setTimeout(notify,100);setTimeout(notify,600);setTimeout(notify,1500);',
+        '});',
+        '</scr' + 'ipt>',
+        '</body></html>'
+      ].join('');
+      const escaped = srcdoc.replace(/"/g, '&quot;');
+      const iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
+      html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), iframeHtml);
+    });
+
   // Patch only changed DOM nodes — preserves scroll, avoids full relayout
   patchViewerDOM(html);
 
@@ -3117,7 +3177,7 @@ async function renderMarkdownFull(content, generation) {
           maxBtn.addEventListener('click', () => {
             const svgContent = svg.outerHTML;
             const isDarkMode = document.body.classList.contains('dark-mode');
-            ipcRenderer.send('open-mermaid-popup', { svgContent, isDarkMode });
+            ipcRenderer.send('open-mermaid-popup', { svgContent, isDarkMode, isCorporateMode: corporateMode });
           });
 
           container.appendChild(maxBtn);
@@ -3170,7 +3230,7 @@ async function renderMarkdownFull(content, generation) {
           const dslCode = el.getAttribute('data-omniware-dsl')
             .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
           const isDark = document.body.classList.contains('dark-mode');
-          ipcRenderer.send('open-omniware-popup', { dslCode, isDarkMode: isDark });
+          ipcRenderer.send('open-omniware-popup', { dslCode, isDarkMode: isDark, isCorporateMode: corporateMode });
         });
 
         container.appendChild(maxBtn);
@@ -6260,7 +6320,7 @@ async function renderMermaidInDOM(code, mode, replaceTarget) {
   maxBtn.addEventListener('click', () => {
     const svg = mermaidEl.querySelector('svg');
     if (svg) {
-      ipcRenderer.send('open-mermaid-popup', { svgContent: svg.outerHTML, isDarkMode: document.body.classList.contains('dark-mode') });
+      ipcRenderer.send('open-mermaid-popup', { svgContent: svg.outerHTML, isDarkMode: document.body.classList.contains('dark-mode'), isCorporateMode: corporateMode });
     }
   });
   container.appendChild(maxBtn);
@@ -7133,3 +7193,10 @@ ctxNotesPanelDelete.addEventListener('click', () => {
     if (el && version) el.textContent = 'v' + version;
   } catch (e) {}
 })();
+
+// Auto-resize @@@html iframes when their content reports height
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'omnicore-rawhtml-resize') return;
+  const iframe = viewer.querySelector(`iframe[data-rawhtml-idx="${e.data.idx}"]`);
+  if (iframe && e.data.h > 0) iframe.style.height = e.data.h + 'px';
+});
