@@ -6342,6 +6342,10 @@ async function renderMermaidInDOM(code, mode, replaceTarget) {
       mermaidSvgCache.set(code, mermaidEl.innerHTML);
     }
   } catch (err) {
+    // Mermaid may detach the element from DOM on error — re-attach so delete still works
+    if (!mermaidEl.isConnected) {
+      container.insertBefore(mermaidEl, maxBtn);
+    }
     mermaidEl.innerHTML = `<div style="color:red;padding:20px;background:#ffe6e6;border:1px solid #ff0000;border-radius:4px;">
       <strong>Mermaid Rendering Error:</strong><br>${err.message}
     </div>`;
@@ -6573,8 +6577,26 @@ function closeMermaidTemplateDialog() {
 }
 
 async function insertMermaidFromDialog() {
-  const code = mermaidTemplateCode.value.trim();
+  // Strip ``` code fences if user accidentally pasted the whole code block
+  let code = mermaidTemplateCode.value.trim();
+  code = code.replace(/^```mermaid\s*\r?\n?/i, '').replace(/\r?\n?```\s*$/, '').trim();
   if (!code) return;
+
+  // Reflect stripped code back to textarea so user sees what will be inserted
+  if (mermaidTemplateCode.value.trim() !== code) {
+    mermaidTemplateCode.value = code;
+  }
+
+  // Validate before inserting — show error in dialog if invalid
+  try {
+    await mermaid.render('mermaid-validate-' + Date.now(), code);
+  } catch (err) {
+    if (mermaidTemplatePreviewEl) {
+      mermaidTemplatePreviewEl.innerHTML = `<span class="mermaid-preview-error">⚠ ${err.message || 'Invalid diagram syntax — fix errors before inserting'}</span>`;
+    }
+    return;
+  }
+
   closeMermaidTemplateDialog();
 
   // Capture and reset state immediately so re-entrant calls are safe
@@ -6759,6 +6781,17 @@ function getCleanTableMarkdown() {
 function insertTableFromDialog() {
   const md = getCleanTableMarkdown();
   if (!md) return;
+
+  // Validate: must parse to a proper <table> element
+  const testDiv = document.createElement('div');
+  testDiv.innerHTML = DOMPurify.sanitize(marked.parse(md));
+  if (!testDiv.querySelector('table')) {
+    if (tableInsertPreviewEl) {
+      tableInsertPreviewEl.innerHTML = '<div style="color:red;padding:10px;background:#ffe6e6;border-radius:4px;margin:8px 0;">⚠ Geçersiz tablo formatı. Markdown tablo sözdizimini kontrol edin (| ile ayrılmış sütunlar gerekli).</div>';
+    }
+    return;
+  }
+
   closeTableInsertDialog();
 
   // Capture and reset state immediately
