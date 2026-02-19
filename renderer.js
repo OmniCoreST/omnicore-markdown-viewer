@@ -1798,17 +1798,39 @@ toggleEditBtn.addEventListener('click', async () => {
       renderMarkdown(originalMarkdown);
     }
     // Enter edit mode
+    // Save scroll ratio before layout changes
+    const viewerScrollRatio = viewer.scrollHeight > viewer.clientHeight
+      ? viewer.scrollTop / (viewer.scrollHeight - viewer.clientHeight)
+      : 0;
+
     contentWrapper.classList.add('split-view');
     markdownEditor.value = originalMarkdown;
     hasUnsavedChanges = false;
     updateUnsavedIndicator();
     toggleEditBtn.style.background = 'var(--primary-color)';
     toggleEditBtn.style.color = '#ffffff';
+
+    // Restore scroll positions after layout settles
+    requestAnimationFrame(() => {
+      const viewerMax = viewer.scrollHeight - viewer.clientHeight;
+      if (viewerMax > 0) viewer.scrollTop = viewerScrollRatio * viewerMax;
+      const editorMax = markdownEditor.scrollHeight - markdownEditor.clientHeight;
+      if (editorMax > 0) markdownEditor.scrollTop = viewerScrollRatio * editorMax;
+    });
   } else {
-    // Exit edit mode
+    // Exit edit mode — preserve viewer scroll position
+    const viewerScrollRatio = viewer.scrollHeight > viewer.clientHeight
+      ? viewer.scrollTop / (viewer.scrollHeight - viewer.clientHeight)
+      : 0;
+
     contentWrapper.classList.remove('split-view');
     toggleEditBtn.style.background = '';
     toggleEditBtn.style.color = '';
+
+    requestAnimationFrame(() => {
+      const viewerMax = viewer.scrollHeight - viewer.clientHeight;
+      if (viewerMax > 0) viewer.scrollTop = viewerScrollRatio * viewerMax;
+    });
     clearTimeout(previewDebounceTimer);
 
     // Resume file tracking when exiting edit mode (if it was paused)
