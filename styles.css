@@ -697,6 +697,8 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
 
 .markdown-body table {
   width: 100%;
+  min-width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   margin: 1em 0;
   background: var(--bg-secondary);
@@ -712,11 +714,15 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
   text-align: left;
   font-weight: 600;
   border-bottom: 2px solid var(--border-color);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .markdown-body td {
   padding: 12px;
   border-bottom: 1px solid var(--border-color);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .markdown-body tr:last-child td {
@@ -2956,6 +2962,7 @@ body.dark-mode .context-menu {
 
 .table-insert-preview table {
   width: 100%;
+  table-layout: fixed;
   font-size: 12px;
   border-collapse: collapse;
 }
@@ -3004,9 +3011,9 @@ body.corporate-mode .markdown-body::after {
 
 .markdown-body table.compact-table {
   font-size: 11px;
-  overflow-x: auto;
-  display: block;
   white-space: nowrap;
+  table-layout: auto;
+  min-width: 100%;
 }
 
 /* ============================================
