@@ -1798,57 +1798,17 @@ toggleEditBtn.addEventListener('click', async () => {
       renderMarkdown(originalMarkdown);
     }
     // Enter edit mode
-    // Find the first visible child element in viewer as scroll anchor
-    let anchorEl = null;
-    const viewerRect = viewer.getBoundingClientRect();
-    for (const child of Array.from(viewer.children)) {
-      const rect = child.getBoundingClientRect();
-      if (rect.bottom > viewerRect.top) {
-        anchorEl = child;
-        break;
-      }
-    }
-    const editorScrollRatio = viewer.scrollHeight > viewer.clientHeight
-      ? viewer.scrollTop / (viewer.scrollHeight - viewer.clientHeight)
-      : 0;
-
     contentWrapper.classList.add('split-view');
     markdownEditor.value = originalMarkdown;
     hasUnsavedChanges = false;
     updateUnsavedIndicator();
     toggleEditBtn.style.background = 'var(--primary-color)';
     toggleEditBtn.style.color = '#ffffff';
-
-    // setTimeout(0) fires after browser resets scroll from layout change
-    // scrollIntoView finds the correct scroll container automatically
-    setTimeout(() => {
-      if (anchorEl && anchorEl.isConnected) {
-        anchorEl.scrollIntoView({ behavior: 'instant', block: 'start' });
-      }
-      const editorMax = markdownEditor.scrollHeight - markdownEditor.clientHeight;
-      if (editorMax > 0) markdownEditor.scrollTop = editorScrollRatio * editorMax;
-    }, 0);
   } else {
-    // Exit edit mode — find scroll anchor before layout change
-    let anchorEl = null;
-    const viewerRectExit = viewer.getBoundingClientRect();
-    for (const child of Array.from(viewer.children)) {
-      const rect = child.getBoundingClientRect();
-      if (rect.bottom > viewerRectExit.top) {
-        anchorEl = child;
-        break;
-      }
-    }
-
+    // Exit edit mode
     contentWrapper.classList.remove('split-view');
     toggleEditBtn.style.background = '';
     toggleEditBtn.style.color = '';
-
-    setTimeout(() => {
-      if (anchorEl && anchorEl.isConnected) {
-        anchorEl.scrollIntoView({ behavior: 'instant', block: 'start' });
-      }
-    }, 0);
     clearTimeout(previewDebounceTimer);
 
     // Resume file tracking when exiting edit mode (if it was paused)
