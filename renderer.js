@@ -1798,8 +1798,20 @@ toggleEditBtn.addEventListener('click', async () => {
       renderMarkdown(originalMarkdown);
     }
     // Enter edit mode
-    // Save scroll ratio before layout changes
-    const viewerScrollRatio = viewer.scrollHeight > viewer.clientHeight
+    // Find the first visible child element in viewer as scroll anchor
+    let anchorEl = null;
+    let anchorTopOffset = 0;
+    const viewerRect = viewer.getBoundingClientRect();
+    for (const child of Array.from(viewer.children)) {
+      const rect = child.getBoundingClientRect();
+      if (rect.bottom > viewerRect.top) {
+        anchorEl = child;
+        anchorTopOffset = rect.top - viewerRect.top;
+        break;
+      }
+    }
+    // Also save editor scroll ratio for syncing
+    const editorScrollRatio = viewer.scrollHeight > viewer.clientHeight
       ? viewer.scrollTop / (viewer.scrollHeight - viewer.clientHeight)
       : 0;
 
@@ -1810,27 +1822,43 @@ toggleEditBtn.addEventListener('click', async () => {
     toggleEditBtn.style.background = 'var(--primary-color)';
     toggleEditBtn.style.color = '#ffffff';
 
-    // Restore scroll positions after layout settles
-    requestAnimationFrame(() => {
-      const viewerMax = viewer.scrollHeight - viewer.clientHeight;
-      if (viewerMax > 0) viewer.scrollTop = viewerScrollRatio * viewerMax;
+    // After layout settles (double rAF ensures reflow is complete)
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      // Scroll viewer so anchor element stays at same visual position
+      if (anchorEl && anchorEl.isConnected) {
+        const newViewerRect = viewer.getBoundingClientRect();
+        const newAnchorRect = anchorEl.getBoundingClientRect();
+        viewer.scrollTop += (newAnchorRect.top - newViewerRect.top) - anchorTopOffset;
+      }
+      // Scroll editor to proportional position
       const editorMax = markdownEditor.scrollHeight - markdownEditor.clientHeight;
-      if (editorMax > 0) markdownEditor.scrollTop = viewerScrollRatio * editorMax;
-    });
+      if (editorMax > 0) markdownEditor.scrollTop = editorScrollRatio * editorMax;
+    }));
   } else {
-    // Exit edit mode — preserve viewer scroll position
-    const viewerScrollRatio = viewer.scrollHeight > viewer.clientHeight
-      ? viewer.scrollTop / (viewer.scrollHeight - viewer.clientHeight)
-      : 0;
+    // Exit edit mode — find scroll anchor before layout change
+    let anchorEl = null;
+    let anchorTopOffset = 0;
+    const viewerRectExit = viewer.getBoundingClientRect();
+    for (const child of Array.from(viewer.children)) {
+      const rect = child.getBoundingClientRect();
+      if (rect.bottom > viewerRectExit.top) {
+        anchorEl = child;
+        anchorTopOffset = rect.top - viewerRectExit.top;
+        break;
+      }
+    }
 
     contentWrapper.classList.remove('split-view');
     toggleEditBtn.style.background = '';
     toggleEditBtn.style.color = '';
 
-    requestAnimationFrame(() => {
-      const viewerMax = viewer.scrollHeight - viewer.clientHeight;
-      if (viewerMax > 0) viewer.scrollTop = viewerScrollRatio * viewerMax;
-    });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (anchorEl && anchorEl.isConnected) {
+        const newViewerRect = viewer.getBoundingClientRect();
+        const newAnchorRect = anchorEl.getBoundingClientRect();
+        viewer.scrollTop += (newAnchorRect.top - newViewerRect.top) - anchorTopOffset;
+      }
+    }));
     clearTimeout(previewDebounceTimer);
 
     // Resume file tracking when exiting edit mode (if it was paused)
