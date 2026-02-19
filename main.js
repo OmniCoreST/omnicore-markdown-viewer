@@ -5,6 +5,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { exec } = require('child_process');
 const HTMLtoDOCX = require('html-to-docx');
 
 // Helper modules
@@ -405,6 +406,29 @@ ipcMain.on('open-folder-in-explorer', (event, filePath) => {
 // IPC HANDLERS - Export
 // ============================================
 
+// Open a file with the system default app; handles WSL2 by converting to Windows path
+function openFileAfterExport(filePath) {
+  if (process.platform === 'linux') {
+    // In WSL2, use wslpath to get the Windows UNC path, then open with explorer.exe
+    exec(`wslpath -w "${filePath}"`, (err, winPath) => {
+      if (!err && winPath && winPath.trim()) {
+        exec(`explorer.exe "${winPath.trim()}"`, (err2) => {
+          if (err2) shell.showItemInFolder(filePath);
+        });
+      } else {
+        // Not WSL2 or wslpath unavailable, fall back to xdg-open
+        shell.openPath(filePath).then(errMsg => {
+          if (errMsg) shell.showItemInFolder(filePath);
+        });
+      }
+    });
+  } else {
+    shell.openPath(filePath).then(errMsg => {
+      if (errMsg) shell.showItemInFolder(filePath);
+    });
+  }
+}
+
 // Build corporate letterhead header/footer templates for printToPDF
 function buildCorporateTemplates(label) {
   const logoPath = path.join(__dirname, 'omnicore-letterhead-logo.png');
@@ -416,7 +440,7 @@ function buildCorporateTemplates(label) {
     console.warn('Corporate logo not found:', logoPath);
   }
   const headerTemplate = `<div style="-webkit-print-color-adjust:exact;color-adjust:exact;width:100%;padding:10px 36px 0 36px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:flex-start;">
-    <img src="${logoDataUri}" style="height:36px;width:auto;display:block;">
+    <div style="-webkit-print-color-adjust:exact;color-adjust:exact;height:36px;width:160px;background-image:url('${logoDataUri}');background-size:contain;background-repeat:no-repeat;background-position:left center;flex-shrink:0;"></div>
     <span style="font-size:9px;color:#999999;font-family:Arial,sans-serif;padding-top:4px;">${label || ''}</span>
   </div>`;
   const footerTemplate = `<div style="-webkit-print-color-adjust:exact;color-adjust:exact;width:100%;height:100%;padding:4px 0 0 36px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:flex-end;font-family:Arial,sans-serif;overflow:visible;">
@@ -478,6 +502,7 @@ ipcMain.on('export-pdf-corporate', async (event, data) => {
       if (err) {
         mainWindow.webContents.send('pdf-export-result', { success: false, error: err.message });
       } else {
+        openFileAfterExport(result.filePath);
         mainWindow.webContents.send('pdf-export-result', { success: true, path: result.filePath });
       }
     });
@@ -534,6 +559,7 @@ ipcMain.on('export-pdf', async (event, data) => {
         });
       } else {
         console.log('PDF saved successfully:', result.filePath);
+        openFileAfterExport(result.filePath);
         mainWindow.webContents.send('pdf-export-result', {
           success: true,
           path: result.filePath
@@ -1198,6 +1224,7 @@ ipcMain.on('open-mermaid-popup', (event, data) => {
 
       if (!result.canceled && result.filePath) {
         fs.writeFileSync(result.filePath, pdfData);
+        openFileAfterExport(result.filePath);
         popupWindow.webContents.send('mermaid-pdf-result', { success: true });
       } else {
         popupWindow.webContents.send('mermaid-pdf-result', { canceled: true });
@@ -1332,6 +1359,7 @@ ipcMain.on('open-omniware-popup', (event, data) => {
         };
         const pdfData = await popupWindow.webContents.printToPDF(printOptions);
         fs.writeFileSync(saveResult.filePath, pdfData);
+        openFileAfterExport(saveResult.filePath);
       }
     } catch (err) {
       console.error('OmniWare PDF export error:', err);
