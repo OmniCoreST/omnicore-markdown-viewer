@@ -2978,9 +2978,9 @@ function renderLightFormat(content, generation) {
 
   // Extract @@@html blocks
   const rawHtmlBlocksLF = [];
-  content = content.replace(/@@@html[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, code) => {
+  content = content.replace(/@@@html(?:\(([^)]*)\))?[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, params, code) => {
     const ph = `RAWHTML_PH_${rawHtmlBlocksLF.length}`;
-    rawHtmlBlocksLF.push({ ph, code });
+    rawHtmlBlocksLF.push({ ph, code, params: params || '' });
     return ph;
   });
 
@@ -2993,7 +2993,14 @@ function renderLightFormat(content, generation) {
   });
 
   // Restore @@@html placeholders as sandboxed iframes
-  rawHtmlBlocksLF.forEach(({ ph, code }, idx) => {
+  rawHtmlBlocksLF.forEach(({ ph, code, params }, idx) => {
+    let zoomVal = 1;
+    if (params) {
+      const zoomMatch = params.match(/zoom\s*:\s*(\d+(?:\.\d+)?%?)/);
+      if (zoomMatch) {
+        zoomVal = zoomMatch[1].endsWith('%') ? parseFloat(zoomMatch[1]) / 100 : parseFloat(zoomMatch[1]);
+      }
+    }
     const srcdoc = [
       '<!DOCTYPE html><html><head>',
       '<meta charset="UTF-8">',
@@ -3009,7 +3016,13 @@ function renderLightFormat(content, generation) {
       '</body></html>'
     ].join('');
     const escaped = srcdoc.replace(/"/g, '&quot;');
-    const iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
+    let iframeHtml;
+    if (zoomVal !== 1) {
+      const scaledWidth = (100 / zoomVal) + '%';
+      iframeHtml = `<div class="raw-html-wrapper" style="width:100%;overflow:hidden;position:relative;min-height:50px;" data-rawhtml-wrapper-idx="${idx}"><iframe class="raw-html-block" data-rawhtml-idx="${idx}" data-rawhtml-zoom="${zoomVal}" srcdoc="${escaped}" style="width:${scaledWidth};border:none;display:block;transform:scale(${zoomVal});transform-origin:top left;position:absolute;top:0;left:0;" scrolling="no"></iframe></div>`;
+    } else {
+      iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
+    }
     html = html.replace(new RegExp(`<p>${ph}</p>|${ph}`), iframeHtml);
   });
 
@@ -3129,9 +3142,9 @@ async function renderMarkdownFull(content, generation) {
     // Extract @@@html blocks and replace with placeholders (bypasses DOMPurify)
     const rawHtmlBlocks = [];
     let rawHtmlIndex = 0;
-    content = content.replace(/@@@html[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, code) => {
+    content = content.replace(/@@@html(?:\(([^)]*)\))?[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, params, code) => {
       const placeholder = `RAWHTML_PLACEHOLDER_${rawHtmlIndex}`;
-      rawHtmlBlocks.push({ placeholder, code });
+      rawHtmlBlocks.push({ placeholder, code, params: params || '' });
       rawHtmlIndex++;
       return placeholder;
     });
@@ -3206,7 +3219,14 @@ async function renderMarkdownFull(content, generation) {
     });
 
     // Replace @@@html placeholders with sandboxed iframes (allows Tailwind CDN and scripts to run)
-    rawHtmlBlocks.forEach(({ placeholder, code }, idx) => {
+    rawHtmlBlocks.forEach(({ placeholder, code, params }, idx) => {
+      let zoomVal = 1;
+      if (params) {
+        const zoomMatch = params.match(/zoom\s*:\s*(\d+(?:\.\d+)?%?)/);
+        if (zoomMatch) {
+          zoomVal = zoomMatch[1].endsWith('%') ? parseFloat(zoomMatch[1]) / 100 : parseFloat(zoomMatch[1]);
+        }
+      }
       const srcdoc = [
         '<!DOCTYPE html><html><head>',
         '<meta charset="UTF-8">',
@@ -3222,7 +3242,13 @@ async function renderMarkdownFull(content, generation) {
         '</body></html>'
       ].join('');
       const escaped = srcdoc.replace(/"/g, '&quot;');
-      const iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
+      let iframeHtml;
+      if (zoomVal !== 1) {
+        const scaledWidth = (100 / zoomVal) + '%';
+        iframeHtml = `<div class="raw-html-wrapper" style="width:100%;overflow:hidden;position:relative;min-height:50px;" data-rawhtml-wrapper-idx="${idx}"><iframe class="raw-html-block" data-rawhtml-idx="${idx}" data-rawhtml-zoom="${zoomVal}" srcdoc="${escaped}" style="width:${scaledWidth};border:none;display:block;transform:scale(${zoomVal});transform-origin:top left;position:absolute;top:0;left:0;" scrolling="no"></iframe></div>`;
+      } else {
+        iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
+      }
       html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), iframeHtml);
     });
 
@@ -7406,5 +7432,12 @@ ctxNotesPanelDelete.addEventListener('click', () => {
 window.addEventListener('message', function(e) {
   if (!e.data || e.data.type !== 'omnicore-rawhtml-resize') return;
   const iframe = viewer.querySelector(`iframe[data-rawhtml-idx="${e.data.idx}"]`);
-  if (iframe && e.data.h > 0) iframe.style.height = e.data.h + 'px';
+  if (iframe && e.data.h > 0) {
+    iframe.style.height = e.data.h + 'px';
+    const zoom = parseFloat(iframe.dataset.rawhtmlZoom) || 1;
+    if (zoom !== 1) {
+      const wrapper = iframe.closest('.raw-html-wrapper');
+      if (wrapper) wrapper.style.height = Math.ceil(e.data.h * zoom) + 'px';
+    }
+  }
 });
