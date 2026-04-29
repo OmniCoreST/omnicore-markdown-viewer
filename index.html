@@ -15,6 +15,21 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
   <!-- PrismJS - Bundled Core and Language Components -->
   <script src="libs/prismjs/prism-bundle.js"></script>
+  <!-- D2 (WASM) bridge: ESM import lazily on first use, exposed as window.loadD2() -->
+  <script type="module">
+    window.loadD2 = function() {
+      if (window._d2Promise) return window._d2Promise;
+      window._d2Promise = import('./libs/d2/d2.js').then(mod => {
+        window.D2 = mod.D2;
+        return mod.D2;
+      }).catch(err => {
+        console.error('D2 bundle failed to load:', err);
+        window._d2Promise = null;
+        throw err;
+      });
+      return window._d2Promise;
+    };
+  </script>
 </head>
 <body>
   <div class="container">

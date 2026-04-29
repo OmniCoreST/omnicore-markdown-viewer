@@ -1658,6 +1658,71 @@ html {
   transform: scale(1);
 }
 
+/* D2 Diagram Container */
+.d2-container {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 16px 0;
+  overflow-x: auto;
+}
+
+.d2-container svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  max-height: 70vh;
+}
+
+.d2-maximize-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--primary-color);
+  color: #ffffff;
+  border: none;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.d2-container:hover .d2-maximize-btn {
+  opacity: 1;
+}
+
+.d2-maximize-btn:hover {
+  background: var(--accent-hover);
+  transform: scale(1.1);
+}
+
+.d2-maximize-btn:active {
+  transform: scale(1);
+}
+
+.d2-error {
+  color: #c0392b;
+  padding: 16px;
+  background: #ffe6e6;
+  border: 1px solid #ff8080;
+  border-radius: 4px;
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+body.dark-mode .d2-error {
+  color: #ff8080;
+  background: #3a1a1a;
+  border-color: #5a2020;
+}
+
 /* OmniWare Wireframe Container */
 .omniware-container {
   position: relative;
@@ -2391,12 +2456,14 @@ body.dark-mode .context-menu {
   top: calc(100% + 4px);
   right: 0;
   min-width: 180px;
+  max-width: min(380px, calc(100vw - 16px));
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   padding: 4px;
   z-index: 1000;
+  overflow-x: hidden;
 }
 
 .tools-menu.visible {

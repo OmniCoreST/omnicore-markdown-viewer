@@ -9,6 +9,7 @@ const html2canvas = require('html2canvas');
 // Helper modules
 const { removeBOM, getFileName, getDirectory, escapeRegex, formatBytes } = require('./utils');
 const { getMermaidConfig } = require('./mermaid-config');
+const { getD2Config } = require('./d2-config');
 const OmniWare = require('./omniwire/omniware');
 const { getOmniWareDarkCSS } = require('./omniware-config');
 const { positionContextMenu, hideContextMenu: hideContextMenuHelper } = require('./context-menu-utils');
@@ -701,6 +702,11 @@ darkModeToggle.addEventListener('click', (e) => {
     updateMermaidTheme(isDarkMode);
   }
 
+  // Re-render D2 diagrams with new theme
+  if (document.querySelectorAll('.d2').length > 0) {
+    updateD2Theme(isDarkMode);
+  }
+
   // Update OmniWare dark mode
   updateOmniWareDarkMode(isDarkMode);
 });
@@ -1194,6 +1200,117 @@ async function updateMermaidTheme(isDark) {
   }
 }
 
+// Serialize all D2 worker calls — the bundled @terrastruct/d2 worker proxy uses
+// single currentResolve/currentReject fields, so concurrent compile/render calls
+// overwrite each other and responses get delivered to the wrong promise.
+let d2RenderQueue = Promise.resolve();
+function d2Serial(fn) {
+  const next = d2RenderQueue.then(fn, fn);
+  // Swallow rejection on the chain so one failure doesn't poison the queue
+  d2RenderQueue = next.catch(() => {});
+  return next;
+}
+
+// Render every <div class="d2"> element under `root` to SVG using the D2 WASM library.
+// Uses d2SvgCache to skip work for unchanged sources. Wraps each in `.d2-container`
+// with a maximize button that opens the diagram in a popup window.
+async function renderD2Diagrams(root) {
+  const elements = root.querySelectorAll('.d2:not([data-d2-rendered])');
+  if (elements.length === 0) return;
+
+  const isDarkMode = document.body.classList.contains('dark-mode');
+  const opts = getD2Config(isDarkMode);
+
+  let d2;
+  try {
+    d2 = await getD2Instance();
+  } catch (e) {
+    elements.forEach(el => {
+      el.innerHTML = `<div class="d2-error"><strong>D2 library failed to load:</strong>\n${e.message}</div>`;
+      el.setAttribute('data-d2-rendered', 'error');
+    });
+    return;
+  }
+
+  // Render each diagram sequentially via the shared queue
+  for (const el of elements) {
+    const src = el.dataset.d2Src
+      ? el.dataset.d2Src.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+      : '';
+    if (!src) continue;
+
+    const cacheKey = `${isDarkMode ? 'd' : 'l'}::${src}`;
+    let svg;
+    if (d2SvgCache.has(cacheKey)) {
+      svg = d2SvgCache.get(cacheKey);
+    } else {
+      try {
+        svg = await d2Serial(async () => {
+          const compiled = await d2.compile(src, opts);
+          const out = await d2.render(compiled.diagram, compiled.renderOptions || opts);
+          if (typeof out !== 'string' || !out.includes('<svg')) {
+            throw new Error('D2 returned non-SVG output');
+          }
+          // D2 bakes natural pixel dimensions into the root <svg> width/height
+          // attributes, which forces oversized rendering. Strip them so the SVG
+          // sizes responsively from its viewBox + container CSS.
+          return out.replace(/<svg\b([^>]*)>/, (m, attrs) => {
+            const cleaned = attrs
+              .replace(/\swidth="[^"]*"/i, '')
+              .replace(/\sheight="[^"]*"/i, '');
+            return `<svg${cleaned} preserveAspectRatio="xMidYMid meet">`;
+          });
+        });
+        d2SvgCache.set(cacheKey, svg);
+      } catch (err) {
+        el.innerHTML = `<div class="d2-error"><strong>D2 Rendering Error:</strong>\n${err.message || err}</div>`;
+        el.setAttribute('data-d2-rendered', 'error');
+        continue;
+      }
+    }
+
+    el.innerHTML = svg;
+    el.setAttribute('data-d2-rendered', 'true');
+
+    // Wrap in container with maximize button (skip if already wrapped)
+    if (!el.closest('.d2-container')) {
+      const container = document.createElement('div');
+      container.className = 'd2-container';
+      el.parentNode.insertBefore(container, el);
+      container.appendChild(el);
+
+      const maxBtn = document.createElement('button');
+      maxBtn.className = 'd2-maximize-btn';
+      maxBtn.title = 'Open in new window';
+      maxBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+        </svg>
+      `;
+      maxBtn.addEventListener('click', () => {
+        const svgEl = el.querySelector('svg');
+        if (!svgEl) return;
+        ipcRenderer.send('open-d2-popup', {
+          svgContent: svgEl.outerHTML,
+          isDarkMode: document.body.classList.contains('dark-mode'),
+          isCorporateMode: corporateMode
+        });
+      });
+      container.appendChild(maxBtn);
+    }
+  }
+}
+
+// Re-render all D2 diagrams with the new theme (called when dark mode toggles).
+async function updateD2Theme(isDark) {
+  d2SvgCache.clear();
+  const elements = viewer.querySelectorAll('.d2');
+  if (elements.length === 0) return;
+  // Reset rendered flag so renderD2Diagrams picks them up again
+  elements.forEach(el => el.removeAttribute('data-d2-rendered'));
+  await renderD2Diagrams(viewer);
+}
+
 /**
  * Update OmniWare wireframe dark mode styling
  * @param {boolean} isDark - Whether dark mode is enabled
@@ -1617,7 +1734,7 @@ exportWordBtn.addEventListener('click', async () => {
     const viewerClone = viewer.cloneNode(true);
 
     // Remove maximize buttons from tables and mermaid diagrams
-    viewerClone.querySelectorAll('.mermaid-maximize-btn, .table-maximize-btn, .code-copy-btn, .omniware-maximize-btn').forEach(el => el.remove());
+    viewerClone.querySelectorAll('.mermaid-maximize-btn, .table-maximize-btn, .code-copy-btn, .omniware-maximize-btn, .d2-maximize-btn').forEach(el => el.remove());
 
     // Convert mermaid diagrams to PNG images for Word compatibility
     const mermaidContainers = viewer.querySelectorAll('.mermaid-container');
@@ -2140,6 +2257,7 @@ function highlightSearchTerm(searchTerm) {
             node.parentNode.closest('.mermaid') ||
             node.parentNode.closest('svg') ||
             node.parentNode.closest('.omniware-rendered') ||
+            node.parentNode.closest('.d2') ||
             node.parentNode.classList?.contains('search-highlight')) {
           return NodeFilter.FILTER_REJECT;
         }
@@ -2879,17 +2997,29 @@ async function translateMarkdownDocument(md, targetLang) {
 
 let renderGeneration = 0; // Stale render cancellation counter
 const mermaidSvgCache = new Map(); // Cache: mermaid source → rendered SVG innerHTML (cleared on theme change)
+const d2SvgCache = new Map(); // Cache: d2 source → rendered SVG string (cleared on theme change)
+
+// Lazy-initialized D2 instance (8MB WASM bundle loaded on first use via window.loadD2())
+let d2Instance = null;
+async function getD2Instance() {
+  if (d2Instance) return d2Instance;
+  if (typeof window.loadD2 !== 'function') throw new Error('D2 loader not registered');
+  const D2Class = await window.loadD2();
+  d2Instance = new D2Class();
+  return d2Instance;
+}
 
 // Detect render mode based on content diff
 function detectRenderMode(oldContent, newContent) {
   if (!oldContent) return 'full';
 
-  // Check if mermaid/omniware/slider blocks changed
+  // Check if mermaid/omniware/d2/slider blocks changed
   const hasMermaid = /```mermaid/i.test(newContent) || /```mermaid/i.test(oldContent);
   const hasOmniware = /```omniware/i.test(newContent) || /```omniware/i.test(oldContent);
+  const hasD2 = /```d2/i.test(newContent) || /```d2/i.test(oldContent);
   const hasSlider = /<!--\s*slider/i.test(newContent) || /<!--\s*slider/i.test(oldContent);
 
-  if (!hasMermaid && !hasOmniware && !hasSlider) {
+  if (!hasMermaid && !hasOmniware && !hasD2 && !hasSlider) {
     // Only text/format changes — check if images changed
     const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
     const oldImgs = [...oldContent.matchAll(imgRegex)].map(m => m[2]).join(',');
@@ -2976,6 +3106,13 @@ function renderLightFormat(content, generation) {
     return ph;
   });
 
+  const d2BlocksLF = [];
+  content = content.replace(/```d2[\r\n]+([\s\S]*?)```/g, (match, code) => {
+    const ph = `D2_PH_${d2BlocksLF.length}`;
+    d2BlocksLF.push({ ph, code: code.trim() });
+    return ph;
+  });
+
   // Extract @@@html blocks
   const rawHtmlBlocksLF = [];
   content = content.replace(/@@@html(?:\(([^)]*)\))?[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, params, code) => {
@@ -2990,6 +3127,12 @@ function renderLightFormat(content, generation) {
   mermaidBlocks.forEach(({ ph, code }) => {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     html = html.replace(ph, `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`);
+  });
+
+  // Restore d2 placeholders as stub divs (renderD2Diagrams below will fill them in)
+  d2BlocksLF.forEach(({ ph, code }) => {
+    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    html = html.replace(ph, `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`);
   });
 
   // Restore @@@html placeholders as sandboxed iframes
@@ -3055,6 +3198,8 @@ function renderLightFormat(content, generation) {
   updateNotesList();
   highlightNewElements();
   addCodeBlockCopyButtons();
+  // Render any new D2 diagrams (cached SVGs are reused, so this is fast)
+  renderD2Diagrams(viewer);
 }
 
 // Highlight only elements not yet processed by Prism
@@ -3139,6 +3284,16 @@ async function renderMarkdownFull(content, generation) {
       return placeholder;
     });
 
+    // Extract d2 blocks and replace with placeholders
+    const d2Blocks = [];
+    let d2Index = 0;
+    content = content.replace(/```d2[\r\n]+([\s\S]*?)```/g, (match, code) => {
+      const placeholder = `D2_PLACEHOLDER_${d2Index}`;
+      d2Blocks.push({ placeholder, code: code.trim() });
+      d2Index++;
+      return placeholder;
+    });
+
     // Extract @@@html blocks and replace with placeholders (bypasses DOMPurify)
     const rawHtmlBlocks = [];
     let rawHtmlIndex = 0;
@@ -3201,6 +3356,13 @@ async function renderMarkdownFull(content, generation) {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     const mermaidDiv = `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`;
     html = html.replace(placeholder, mermaidDiv);
+  });
+
+  // Replace placeholders with d2 stub divs (rendered async after DOM insertion)
+  d2Blocks.forEach(({ placeholder, code }) => {
+    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const d2Div = `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`;
+    html = html.replace(placeholder, d2Div);
   });
 
     // Replace placeholders with rendered omniware wireframes
@@ -3333,6 +3495,10 @@ async function renderMarkdownFull(content, generation) {
       }
     });
   }
+
+    // Render D2 diagrams in the background — don't block the render pipeline on
+    // the 8MB WASM init. Each diagram shows a "Rendering…" placeholder until it resolves.
+    renderD2Diagrams(viewer).catch(err => console.error('D2 render error:', err));
 
     // Post-process OmniWare wireframes
     const omniwareElements = viewer.querySelectorAll('.omniware-rendered');

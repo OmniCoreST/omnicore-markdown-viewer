@@ -1,6 +1,6 @@
 {
   "name": "omnicore-markdown-viewer",
-  "version": "2.0.8",
+  "version": "2.1.0",
   "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
   "main": "main.js",
   "scripts": {
@@ -75,6 +75,7 @@
       "omniware-config.js",
       "utils.js",
       "mermaid-config.js",
+      "d2-config.js",
       "context-menu-utils.js",
       "notification-helpers.js",
       "file-helpers.js",
