@@ -1722,6 +1722,92 @@ body.dark-mode .d2-error {
   border-color: #5a2020;
 }
 
+/* tscircuit Schematic Container */
+.tscircuit-container {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 16px 0;
+  overflow-x: auto;
+}
+
+.tscircuit {
+  display: block;
+  width: 100%;
+  min-height: 200px;
+}
+
+.tscircuit svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.tscircuit-placeholder {
+  padding: 24px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+  background: #f8f8f8;
+  border: 1px dashed #ccc;
+  border-radius: 4px;
+}
+
+body.dark-mode .tscircuit-placeholder {
+  color: #aaa;
+  background: #2a2a2a;
+  border-color: #444;
+}
+
+.tscircuit-maximize-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--primary-color);
+  color: #ffffff;
+  border: none;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.tscircuit-container:hover .tscircuit-maximize-btn {
+  opacity: 1;
+}
+
+.tscircuit-maximize-btn:hover {
+  background: var(--accent-hover);
+  transform: scale(1.1);
+}
+
+.tscircuit-maximize-btn:active {
+  transform: scale(1);
+}
+
+.tscircuit-error {
+  color: #c0392b;
+  padding: 16px;
+  background: #ffe6e6;
+  border: 1px solid #ff8080;
+  border-radius: 4px;
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+body.dark-mode .tscircuit-error {
+  color: #ff8080;
+  background: #3a1a1a;
+  border-color: #5a2020;
+}
+
 /* OmniWare Wireframe Container */
 .omniware-container {
   position: relative;

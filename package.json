@@ -1,6 +1,6 @@
 {
   "name": "omnicore-markdown-viewer",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
   "main": "main.js",
   "scripts": {
@@ -32,9 +32,16 @@
     "url": "https://github.com/OmniCoreST/omnicore-markdown-viewer.git"
   },
   "devDependencies": {
+    "@tscircuit/eval": "^0.0.803",
+    "@tscircuit/schematic-viewer": "^2.0.59",
+    "circuit-json": "^0.0.421",
+    "circuit-to-svg": "^0.0.345",
     "electron": "^27.0.0",
     "electron-builder": "^24.6.4",
-    "png-to-ico": "^3.0.1"
+    "esbuild": "^0.28.0",
+    "png-to-ico": "^3.0.1",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
   },
   "dependencies": {
     "dompurify": "^3.0.6",
@@ -76,6 +83,7 @@
       "utils.js",
       "mermaid-config.js",
       "d2-config.js",
+      "tscircuit-config.js",
       "context-menu-utils.js",
       "notification-helpers.js",
       "file-helpers.js",
@@ -231,7 +239,9 @@
       "runAfterFinish": true,
       "menuCategory": true,
       "displayLanguageSelector": false,
-      "installerLanguages": ["en_US"],
+      "installerLanguages": [
+        "en_US"
+      ],
       "language": "1033",
       "perMachine": true,
       "deleteAppDataOnUninstall": false,

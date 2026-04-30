@@ -9,7 +9,7 @@ const { exec } = require('child_process');
 const HTMLtoDOCX = require('html-to-docx');
 
 // Helper modules
-const { isMermaidFile, wrapMermaidContent, removeBOM, readMarkdownFile, sendIPCResult } = require('./file-helpers');
+const { isMermaidFile, isTscircuitFile, wrapMermaidContent, removeBOM, readMarkdownFile, sendIPCResult } = require('./file-helpers');
 
 // ============================================
 // CONDITIONAL IMPORTS
@@ -321,6 +321,7 @@ function openFileDialog() {
       { name: 'Markdown Files', extensions: ['md', 'markdown', 'mdown', 'mkd', 'mkdn'] },
       { name: 'Mermaid Files', extensions: ['mmd', 'mermaid'] },
       { name: 'OmniWare Files', extensions: ['ow'] },
+      { name: 'tscircuit Schematics', extensions: ['circuit.tsx'] },
       { name: 'All Files', extensions: ['*'] }
     ]
   }).then(result => {
@@ -1531,6 +1532,288 @@ ipcMain.on('open-d2-popup', (event, data) => {
   });
 });
 
+// Handle tscircuit schematic popup request — mirrors the D2 popup: pre-rendered
+// SVG, pan/zoom, PDF export. The renderer compiles the schematic before opening
+// the popup, so this code path never runs the tscircuit bundle itself.
+ipcMain.on('open-tscircuit-popup', (event, data) => {
+  const { svgContent, isDarkMode, isCorporateMode } = data;
+
+  const popupWindow = new BrowserWindow({
+    width: 1200,
+    height: 900,
+    backgroundColor: isDarkMode ? '#1a1a1a' : '#ffffff',
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    },
+    title: 'tscircuit Schematic - Zoom with mouse wheel, Pan by dragging',
+    icon: path.join(__dirname, 'logo.ico')
+  });
+
+  popupWindow.setMenu(null);
+
+  const tempHtmlPath = path.join(os.tmpdir(), 'omnicore-temp-tscircuit.html');
+
+  const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>tscircuit Schematic</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: ${isDarkMode ? '#1a1a1a' : '#f0f0f0'};
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: ${isDarkMode ? '#2d2d2d' : 'white'};
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,${isDarkMode ? '0.3' : '0.1'});
+            pointer-events: auto;
+            z-index: 10;
+            border: 1px solid ${isDarkMode ? '#404040' : 'transparent'};
+        }
+        h1 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: ${isDarkMode ? '#3DBDC6' : '#333'};
+        }
+        p {
+            margin: 0 0 10px 0;
+            font-size: 12px;
+            color: ${isDarkMode ? '#a0a0a0' : '#666'};
+        }
+        button {
+            padding: 8px 12px;
+            background-color: ${isDarkMode ? '#3DBDC6' : '#279EA7'};
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+            width: 100%;
+            margin-bottom: 8px;
+        }
+        button:last-child { margin-bottom: 0; }
+        button:hover { background-color: ${isDarkMode ? '#4FCDD6' : '#1f8089'}; }
+        button:disabled { background-color: ${isDarkMode ? '#555' : '#ccc'}; cursor: not-allowed; }
+        #svg-container-wrapper { cursor: grab; overflow: hidden; }
+        #svg-container-wrapper:active { cursor: grabbing; }
+        #viewport { will-change: transform; }
+    </style>
+</head>
+<body>
+    <div class="ui-overlay">
+        <h1>tscircuit Schematic</h1>
+        <p>• Scroll to Zoom (at cursor)<br>• Click & Drag to Pan</p>
+        <button onclick="resetView()">Reset View</button>
+        <button id="pdfBtn" onclick="savePDF()">Save as PDF</button>
+    </div>
+    <div id="svg-container-wrapper" style="width: 100%; height: 100%; position: relative;">
+        <div id="viewport" style="transform-origin: 0 0;">
+            ${svgContent}
+        </div>
+    </div>
+    <script>
+        const svgWrapper = document.getElementById('svg-container-wrapper');
+        const viewport = document.getElementById('viewport');
+        const tsSvg = viewport.querySelector('svg');
+
+        if (tsSvg) {
+            tsSvg.style.display = 'block';
+            tsSvg.style.maxWidth = '100%';
+            tsSvg.style.height = 'auto';
+        }
+        const svg = svgWrapper;
+        let state = { scale: 1, panning: false, pointX: 0, pointY: 0, startX: 0, startY: 0 };
+        const config = { minScale: 0.01, maxScale: 10, zoomSpeed: 0.1 };
+
+        if (tsSvg) {
+            const svgRect = tsSvg.getBoundingClientRect();
+            const wrapperRect = svgWrapper.getBoundingClientRect();
+            const scaleX = (wrapperRect.width * 0.9) / svgRect.width;
+            const scaleY = (wrapperRect.height * 0.9) / svgRect.height;
+            const initialScale = Math.min(scaleX, scaleY, 1);
+            state.scale = initialScale;
+            state.pointX = (wrapperRect.width - svgRect.width * initialScale) / 2;
+            state.pointY = (wrapperRect.height - svgRect.height * initialScale) / 2;
+            updateTransform();
+        }
+
+        svg.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = viewport.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            const delta = -Math.sign(e.deltaY);
+            const zoomFactor = 1 + (config.zoomSpeed * delta);
+            let newScale = state.scale * zoomFactor;
+            if (newScale < config.minScale) newScale = config.minScale;
+            if (newScale > config.maxScale) newScale = config.maxScale;
+            const ratio = newScale / state.scale;
+            state.pointX = mouseX - (mouseX - state.pointX) * ratio;
+            state.pointY = mouseY - (mouseY - state.pointY) * ratio;
+            state.scale = newScale;
+            updateTransform();
+        }, { passive: false });
+
+        function startPan(e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            state.panning = true;
+            state.startX = e.clientX - state.pointX;
+            state.startY = e.clientY - state.pointY;
+            svg.style.cursor = 'grabbing';
+        }
+        function pan(e) {
+            if (!state.panning) return;
+            e.preventDefault();
+            state.pointX = e.clientX - state.startX;
+            state.pointY = e.clientY - state.startY;
+            updateTransform();
+        }
+        function endPan() {
+            state.panning = false;
+            svg.style.cursor = 'grab';
+        }
+        svg.addEventListener('mousedown', startPan);
+        window.addEventListener('mousemove', pan);
+        window.addEventListener('mouseup', endPan);
+
+        function updateTransform() {
+            viewport.style.transform = \`translate(\${state.pointX}px, \${state.pointY}px) scale(\${state.scale})\`;
+        }
+        window.resetView = function() {
+            state = { scale: 1, panning: false, pointX: 0, pointY: 0, startX: 0, startY: 0 };
+            updateTransform();
+        };
+
+        window.savePDF = async function() {
+            const { ipcRenderer } = require('electron');
+            const pdfBtn = document.getElementById('pdfBtn');
+            const originalText = pdfBtn.textContent;
+            pdfBtn.textContent = 'Saving...';
+            pdfBtn.disabled = true;
+
+            const overlay = document.querySelector('.ui-overlay');
+            overlay.style.display = 'none';
+            svgWrapper.style.display = 'none';
+
+            const pdfContainer = document.createElement('div');
+            pdfContainer.id = 'pdf-export-container';
+            pdfContainer.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:${isDarkMode ? '#1a1a1a' : '#f0f0f0'};';
+
+            const svgClone = tsSvg.cloneNode(true);
+            const pageWidth = window.innerWidth;
+            const pageHeight = window.innerHeight;
+            const viewBox = tsSvg.viewBox?.baseVal;
+            const naturalWidth = viewBox?.width || parseFloat(tsSvg.getAttribute('width')) || 800;
+            const naturalHeight = viewBox?.height || parseFloat(tsSvg.getAttribute('height')) || 600;
+            const maxWidth = pageWidth * 0.85;
+            const maxHeight = pageHeight * 0.85;
+            const scale = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight);
+            const finalWidth = naturalWidth * scale;
+            const finalHeight = naturalHeight * scale;
+
+            svgClone.setAttribute('width', finalWidth);
+            svgClone.setAttribute('height', finalHeight);
+            svgClone.style.maxWidth = 'none';
+            svgClone.style.width = finalWidth + 'px';
+            svgClone.style.height = finalHeight + 'px';
+
+            pdfContainer.appendChild(svgClone);
+            document.body.appendChild(pdfContainer);
+
+            await new Promise(resolve => setTimeout(resolve, 200));
+
+            ipcRenderer.send('tscircuit-export-pdf');
+
+            ipcRenderer.once('tscircuit-pdf-result', (event, result) => {
+                pdfContainer.remove();
+                svgWrapper.style.display = '';
+                overlay.style.display = 'block';
+                if (result.success) {
+                    pdfBtn.textContent = 'Saved!';
+                } else if (result.canceled) {
+                    pdfBtn.textContent = originalText;
+                    pdfBtn.disabled = false;
+                    return;
+                } else {
+                    pdfBtn.textContent = 'Error!';
+                }
+                setTimeout(() => {
+                    pdfBtn.textContent = originalText;
+                    pdfBtn.disabled = false;
+                }, 1500);
+            });
+        };
+    </script>
+</body>
+</html>`;
+
+  fs.writeFileSync(tempHtmlPath, htmlContent);
+  popupWindow.loadFile(tempHtmlPath);
+
+  const tscircuitPdfHandler = async (ev) => {
+    if (BrowserWindow.fromWebContents(ev.sender) !== popupWindow) return;
+    try {
+      const printOptions = isCorporateMode ? {
+        printBackground: true,
+        landscape: true,
+        pageSize: 'A4',
+        displayHeaderFooter: true,
+        ...buildCorporateTemplates('tscircuit-schematic.pdf'),
+        margins: { top: 1.2, bottom: 1.0, left: 0.8, right: 0.8 }
+      } : {
+        printBackground: true,
+        landscape: true,
+        pageSize: 'A4',
+        margins: { top: 0, bottom: 0, left: 0, right: 0 }
+      };
+
+      const pdfData = await popupWindow.webContents.printToPDF(printOptions);
+
+      const result = await dialog.showSaveDialog(popupWindow, {
+        title: 'Save tscircuit Schematic as PDF',
+        defaultPath: path.join(os.homedir(), 'tscircuit-schematic.pdf'),
+        filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+      });
+
+      if (!result.canceled && result.filePath) {
+        fs.writeFileSync(result.filePath, pdfData);
+        openFileAfterExport(result.filePath);
+        popupWindow.webContents.send('tscircuit-pdf-result', { success: true });
+      } else {
+        popupWindow.webContents.send('tscircuit-pdf-result', { canceled: true });
+      }
+    } catch (err) {
+      console.error('tscircuit PDF export error:', err);
+      popupWindow.webContents.send('tscircuit-pdf-result', { success: false, error: err.message });
+    }
+  };
+  ipcMain.on('tscircuit-export-pdf', tscircuitPdfHandler);
+
+  popupWindow.on('closed', () => {
+    ipcMain.removeListener('tscircuit-export-pdf', tscircuitPdfHandler);
+    try {
+      if (fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath);
+    } catch (err) {
+      console.error('Error cleaning up temp file:', err);
+    }
+  });
+});
+
 // Handle OmniWare wireframe popup request
 ipcMain.on('open-omniware-popup', (event, data) => {
   const { dslCode, isDarkMode, isCorporateMode } = data;
@@ -2275,7 +2558,7 @@ function handleFileArgument(argv) {
     // Check if it's a file path
     if (fs.existsSync(arg)) {
       const ext = path.extname(arg).toLowerCase();
-      if (['.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mmd', '.mermaid', '.ow'].includes(ext)) {
+      if (['.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mmd', '.mermaid', '.ow'].includes(ext) || isTscircuitFile(arg)) {
         filePath = arg;
         break;
       }

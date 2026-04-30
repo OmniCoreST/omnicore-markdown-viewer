@@ -10,6 +10,7 @@ const html2canvas = require('html2canvas');
 const { removeBOM, getFileName, getDirectory, escapeRegex, formatBytes } = require('./utils');
 const { getMermaidConfig } = require('./mermaid-config');
 const { getD2Config } = require('./d2-config');
+const { getTscircuitConfig } = require('./tscircuit-config');
 const OmniWare = require('./omniwire/omniware');
 const { getOmniWareDarkCSS } = require('./omniware-config');
 const { positionContextMenu, hideContextMenu: hideContextMenuHelper } = require('./context-menu-utils');
@@ -707,6 +708,11 @@ darkModeToggle.addEventListener('click', (e) => {
     updateD2Theme(isDarkMode);
   }
 
+  // Re-render tscircuit schematics with new theme
+  if (document.querySelectorAll('.tscircuit').length > 0) {
+    updateTscircuitTheme(isDarkMode);
+  }
+
   // Update OmniWare dark mode
   updateOmniWareDarkMode(isDarkMode);
 });
@@ -1309,6 +1315,90 @@ async function updateD2Theme(isDark) {
   // Reset rendered flag so renderD2Diagrams picks them up again
   elements.forEach(el => el.removeAttribute('data-d2-rendered'));
   await renderD2Diagrams(viewer);
+}
+
+// Render every <div class="tscircuit"> element under `root` to SVG using the
+// bundled tscircuit library (libs/tscircuit/tscircuit-bundle.js, loaded lazily
+// via window.loadTscircuit()). Wraps each in `.tscircuit-container` with a
+// maximize button. Mode is tsx (compile via @tscircuit/eval) or json (raw).
+async function renderTscircuitDiagrams(root) {
+  const elements = root.querySelectorAll('.tscircuit:not([data-tscircuit-rendered])');
+  if (elements.length === 0) return;
+
+  let Tscircuit;
+  try {
+    Tscircuit = await window.loadTscircuit();
+  } catch (e) {
+    elements.forEach(el => {
+      el.innerHTML = `<div class="tscircuit-error"><strong>tscircuit library failed to load:</strong>\n${e.message}</div>`;
+      el.setAttribute('data-tscircuit-rendered', 'error');
+    });
+    return;
+  }
+
+  const isDarkMode = document.body.classList.contains('dark-mode');
+  const opts = getTscircuitConfig(isDarkMode);
+
+  // Render sequentially — runTscircuitCode shares the eval worker across calls
+  // and concurrent compiles within the same worker can deadlock.
+  for (const el of elements) {
+    const src = el.dataset.tscircuitSrc
+      ? el.dataset.tscircuitSrc.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+      : '';
+    if (!src) continue;
+
+    const cacheKey = `${isDarkMode ? 'd' : 'l'}::${src}`;
+    if (tscircuitSvgCache.has(cacheKey)) {
+      el.innerHTML = tscircuitSvgCache.get(cacheKey);
+      el.setAttribute('data-tscircuit-rendered', 'true');
+    } else {
+      try {
+        await Tscircuit.renderSchematic(el, src, { isDark: opts.isDark });
+        tscircuitSvgCache.set(cacheKey, el.innerHTML);
+        el.setAttribute('data-tscircuit-rendered', 'true');
+      } catch (err) {
+        el.innerHTML = `<div class="tscircuit-error"><strong>tscircuit Rendering Error:</strong>\n${(err && err.message) || err}</div>`;
+        el.setAttribute('data-tscircuit-rendered', 'error');
+        continue;
+      }
+    }
+
+    // Wrap in container with maximize button (skip if already wrapped)
+    if (!el.closest('.tscircuit-container')) {
+      const container = document.createElement('div');
+      container.className = 'tscircuit-container';
+      el.parentNode.insertBefore(container, el);
+      container.appendChild(el);
+
+      const maxBtn = document.createElement('button');
+      maxBtn.className = 'tscircuit-maximize-btn';
+      maxBtn.title = 'Open in new window';
+      maxBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+        </svg>
+      `;
+      maxBtn.addEventListener('click', () => {
+        const svgEl = el.querySelector('svg');
+        if (!svgEl) return;
+        ipcRenderer.send('open-tscircuit-popup', {
+          svgContent: svgEl.outerHTML,
+          isDarkMode: document.body.classList.contains('dark-mode'),
+          isCorporateMode: corporateMode
+        });
+      });
+      container.appendChild(maxBtn);
+    }
+  }
+}
+
+// Re-render all tscircuit schematics with the new theme (called when dark mode toggles).
+async function updateTscircuitTheme(isDark) {
+  tscircuitSvgCache.clear();
+  const elements = viewer.querySelectorAll('.tscircuit');
+  if (elements.length === 0) return;
+  elements.forEach(el => el.removeAttribute('data-tscircuit-rendered'));
+  await renderTscircuitDiagrams(viewer);
 }
 
 /**
@@ -2998,6 +3088,7 @@ async function translateMarkdownDocument(md, targetLang) {
 let renderGeneration = 0; // Stale render cancellation counter
 const mermaidSvgCache = new Map(); // Cache: mermaid source → rendered SVG innerHTML (cleared on theme change)
 const d2SvgCache = new Map(); // Cache: d2 source → rendered SVG string (cleared on theme change)
+const tscircuitSvgCache = new Map(); // Cache: tscircuit source+mode → rendered SVG innerHTML (cleared on theme change)
 
 // Lazy-initialized D2 instance (8MB WASM bundle loaded on first use via window.loadD2())
 let d2Instance = null;
@@ -3013,13 +3104,14 @@ async function getD2Instance() {
 function detectRenderMode(oldContent, newContent) {
   if (!oldContent) return 'full';
 
-  // Check if mermaid/omniware/d2/slider blocks changed
+  // Check if mermaid/omniware/d2/tscircuit/slider blocks changed
   const hasMermaid = /```mermaid/i.test(newContent) || /```mermaid/i.test(oldContent);
   const hasOmniware = /```omniware/i.test(newContent) || /```omniware/i.test(oldContent);
   const hasD2 = /```d2/i.test(newContent) || /```d2/i.test(oldContent);
+  const hasTscircuit = /```tscircuit/i.test(newContent) || /```tscircuit/i.test(oldContent);
   const hasSlider = /<!--\s*slider/i.test(newContent) || /<!--\s*slider/i.test(oldContent);
 
-  if (!hasMermaid && !hasOmniware && !hasD2 && !hasSlider) {
+  if (!hasMermaid && !hasOmniware && !hasD2 && !hasTscircuit && !hasSlider) {
     // Only text/format changes — check if images changed
     const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
     const oldImgs = [...oldContent.matchAll(imgRegex)].map(m => m[2]).join(',');
@@ -3294,6 +3386,16 @@ async function renderMarkdownFull(content, generation) {
       return placeholder;
     });
 
+    // Extract tscircuit (TSX) blocks. Rendered via the tscircuit bundle.
+    const tscircuitBlocks = [];
+    let tscircuitIndex = 0;
+    content = content.replace(/```tscircuit[\r\n]+([\s\S]*?)```/g, (match, code) => {
+      const placeholder = `TSCIRCUIT_PLACEHOLDER_${tscircuitIndex}`;
+      tscircuitBlocks.push({ placeholder, code: code.trim() });
+      tscircuitIndex++;
+      return placeholder;
+    });
+
     // Extract @@@html blocks and replace with placeholders (bypasses DOMPurify)
     const rawHtmlBlocks = [];
     let rawHtmlIndex = 0;
@@ -3363,6 +3465,14 @@ async function renderMarkdownFull(content, generation) {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     const d2Div = `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`;
     html = html.replace(placeholder, d2Div);
+  });
+
+  // Replace placeholders with tscircuit stub divs (rendered async — first load
+  // pulls a 5MB bundle so the placeholder shows progress to the user)
+  tscircuitBlocks.forEach(({ placeholder, code }) => {
+    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const tscircuitDiv = `<div class="tscircuit" data-tscircuit-src="${escapedSrc}"><div class="tscircuit-placeholder">Rendering tscircuit schematic…</div></div>`;
+    html = html.replace(placeholder, tscircuitDiv);
   });
 
     // Replace placeholders with rendered omniware wireframes
@@ -3499,6 +3609,9 @@ async function renderMarkdownFull(content, generation) {
     // Render D2 diagrams in the background — don't block the render pipeline on
     // the 8MB WASM init. Each diagram shows a "Rendering…" placeholder until it resolves.
     renderD2Diagrams(viewer).catch(err => console.error('D2 render error:', err));
+
+    // Render tscircuit schematics in the background (5MB bundle, lazy loaded)
+    renderTscircuitDiagrams(viewer).catch(err => console.error('tscircuit render error:', err));
 
     // Post-process OmniWare wireframes
     const omniwareElements = viewer.querySelectorAll('.omniware-rendered');

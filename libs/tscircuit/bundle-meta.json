@@ -1,0 +1,9 @@
+{
+  "builtAt": "2026-04-30T14:31:51.510Z",
+  "sizeBytes": 5279666,
+  "versions": {
+    "@tscircuit/eval": "0.0.803",
+    "circuit-to-svg": "0.0.345",
+    "circuit-json": "0.0.421"
+  }
+}

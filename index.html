@@ -30,6 +30,26 @@
       return window._d2Promise;
     };
   </script>
+  <!-- tscircuit bundle: IIFE script lazily injected on first use, exposes window.Tscircuit -->
+  <script>
+    window.loadTscircuit = function() {
+      if (window._tscircuitPromise) return window._tscircuitPromise;
+      window._tscircuitPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = './libs/tscircuit/tscircuit-bundle.js';
+        script.onload = () => {
+          if (window.Tscircuit) resolve(window.Tscircuit);
+          else { window._tscircuitPromise = null; reject(new Error('tscircuit bundle did not expose window.Tscircuit')); }
+        };
+        script.onerror = () => {
+          window._tscircuitPromise = null;
+          reject(new Error('tscircuit bundle failed to load'));
+        };
+        document.head.appendChild(script);
+      });
+      return window._tscircuitPromise;
+    };
+  </script>
 </head>
 <body>
   <div class="container">

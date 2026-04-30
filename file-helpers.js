@@ -7,11 +7,16 @@ const path = require('path');
 
 /**
  * Supported file extensions
+ *
+ * tscircuit uses a compound extension (.circuit.tsx) so plain .tsx files —
+ * which are normal TypeScript-React source — aren't auto-opened. The check
+ * for tscircuit happens by basename suffix, not by `path.extname()`.
  */
 const SUPPORTED_EXTENSIONS = {
   markdown: ['.md', '.markdown', '.mdown', '.mkd', '.mkdn'],
   mermaid: ['.mmd', '.mermaid'],
-  omniware: ['.ow']
+  omniware: ['.ow'],
+  tscircuit: ['.circuit.tsx']
 };
 
 /**
@@ -35,7 +40,18 @@ function isOmniWareFile(filePath) {
 }
 
 /**
- * Check if file is a Markdown file (or viewable format: mermaid, omniware)
+ * Check if file is a tscircuit schematic file. Uses suffix matching because
+ * the extension is compound (.circuit.tsx) and `path.extname` can't see it.
+ * @param {string} filePath - Path to the file
+ * @returns {boolean}
+ */
+function isTscircuitFile(filePath) {
+  const lower = filePath.toLowerCase();
+  return SUPPORTED_EXTENSIONS.tscircuit.some(ext => lower.endsWith(ext));
+}
+
+/**
+ * Check if file is a Markdown file (or viewable format: mermaid, omniware, tscircuit)
  * @param {string} filePath - Path to the file
  * @returns {boolean}
  */
@@ -43,7 +59,8 @@ function isMarkdownFile(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   return SUPPORTED_EXTENSIONS.markdown.includes(ext) ||
          SUPPORTED_EXTENSIONS.mermaid.includes(ext) ||
-         SUPPORTED_EXTENSIONS.omniware.includes(ext);
+         SUPPORTED_EXTENSIONS.omniware.includes(ext) ||
+         isTscircuitFile(filePath);
 }
 
 /**
@@ -83,6 +100,23 @@ function wrapOmniWareContent(content, filePath) {
 }
 
 /**
+ * Wrap content in tscircuit code block if it's a .circuit.tsx file
+ * @param {string} content - File content
+ * @param {string} filePath - Path to the file
+ * @returns {string} Wrapped or original content
+ */
+function wrapTscircuitContent(content, filePath) {
+  if (isTscircuitFile(filePath)) {
+    const trimmed = content.trim();
+    if (trimmed.startsWith('```tscircuit') || trimmed.startsWith('~~~tscircuit')) {
+      return content;
+    }
+    return '```tscircuit\n' + content + '\n```';
+  }
+  return content;
+}
+
+/**
  * Remove BOM (Byte Order Mark) if present
  * @param {string} content - File content
  * @returns {string} Content without BOM
@@ -111,6 +145,8 @@ function readMarkdownFile(filePath, callback) {
     data = wrapMermaidContent(data, filePath);
     // Wrap omniware files
     data = wrapOmniWareContent(data, filePath);
+    // Wrap tscircuit files
+    data = wrapTscircuitContent(data, filePath);
     callback(null, data);
   });
 }
@@ -131,9 +167,11 @@ module.exports = {
   SUPPORTED_EXTENSIONS,
   isMermaidFile,
   isOmniWareFile,
+  isTscircuitFile,
   isMarkdownFile,
   wrapMermaidContent,
   wrapOmniWareContent,
+  wrapTscircuitContent,
   removeBOM,
   readMarkdownFile,
   sendIPCResult
