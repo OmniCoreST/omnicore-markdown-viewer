@@ -47,6 +47,13 @@ fonts/*.woff2
 
 # Claude Code documentation (local only)
 CLAUDE.md
+.claude/
+
+# Test files
+tests-electronics/
+
+# Screenshots
+ss/
 
 # Windows null device files
 nul
