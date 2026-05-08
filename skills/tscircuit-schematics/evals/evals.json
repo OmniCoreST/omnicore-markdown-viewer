@@ -1,0 +1,48 @@
+{
+  "skill_name": "tscircuit-schematics",
+  "evals": [
+    {
+      "id": 0,
+      "name": "author-from-scratch-power-led",
+      "prompt": "I'm writing a markdown design doc for a tiny prototype board and I need a tscircuit code block I can drop in. The block should show a 3.3V rail driving a single red status LED through a 1k current-limiting resistor to ground. Just the schematic — I don't care about PCB placement. Keep it minimal and make sure the LED actually shows as connected when rendered.",
+      "files": [],
+      "assertions": [
+        {"id": "tsx_exists", "text": "TSX output file exists and is non-empty"},
+        {"id": "canonical_pin_selector", "text": "Trace selectors use the canonical `.X > .pin` form (no plain `.X .pin` space-without-`>` form, which is the bug pattern)"},
+        {"id": "uses_auto_layout", "text": "Lets auto-layout do the work — no `schAutoLayoutEnabled={false}` and no manual `schX/schY` props (per skill Rule 3)"},
+        {"id": "no_eval_errors", "text": "Render produces no `source_failed_to_create_component_error` or `source_pin_missing_trace_warning`"},
+        {"id": "renders_with_traces", "text": "Render produces at least one schematic_trace (the R↔LED inter-component wire)"},
+        {"id": "png_nontrivial", "text": "Rendered PNG is at least 5 KB (a near-empty schematic is tiny)"}
+      ]
+    },
+    {
+      "id": 1,
+      "name": "debug-broken-button-circuit",
+      "prompt": "Fix a tscircuit code block where the pushbutton is floating and the MOSFET doesn't draw. The original had `.X .pin` selectors, `.side1/.side2` on the pushbutton, and a missing `mosfetMode`.",
+      "files": [],
+      "assertions": [
+        {"id": "no_space_pin_selector", "text": "Output TSX has zero `.X .pinN` selectors (the broken form) — only `.X > .pinN`"},
+        {"id": "no_side1_side2", "text": "Output TSX has zero references to `.side1` or `.side2` (uses `.pin1`/`.pin2` for pushbutton)"},
+        {"id": "mosfet_mode_set", "text": "Output TSX sets `mosfetMode=` on every `<mosfet>` element"},
+        {"id": "no_failed_component", "text": "Render produces no `source_failed_to_create_component_error`"},
+        {"id": "no_missing_trace_warning_for_authored_pins", "text": "Render produces no `source_pin_missing_trace_warning` for pin1/pin2 (the authored pins). Pin3/pin4 warnings on pushbutton are benign — bridged-pole pins don't need separate connections"},
+        {"id": "all_components_render", "text": "Render produces all four components (R_PU, SW1, C_DB, Q1) as schematic_components"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "multi-channel-can-bus-array",
+      "prompt": "Author a 4-channel CAN-FD transceiver array with custom-pinLabel chips, 120Ω terminations, shared VCC_5V/GND, per-channel CANx_TX/CANx_RX nets.",
+      "files": [],
+      "assertions": [
+        {"id": "four_chips_present", "text": "Output TSX declares exactly 4 `<chip>` elements"},
+        {"id": "custom_pin_labels_used", "text": "Each chip declares pinLabels including TXD, RXD, VDD, VSS, CANH, CANL"},
+        {"id": "termination_resistors", "text": "Output TSX declares 4 termination resistors with `resistance=\"120\"` (or equivalent)"},
+        {"id": "shared_rail_nets", "text": "Output TSX references `net.VCC_5V` and `net.GND` from every chip"},
+        {"id": "per_channel_tx_rx_nets", "text": "Output TSX references the 8 per-channel nets CAN0_TX/CAN0_RX through CAN3_TX/CAN3_RX"},
+        {"id": "no_failed_component", "text": "Render produces no `source_failed_to_create_component_error`"},
+        {"id": "no_missing_trace_warning", "text": "Render produces no `source_pin_missing_trace_warning`"}
+      ]
+    }
+  ]
+}

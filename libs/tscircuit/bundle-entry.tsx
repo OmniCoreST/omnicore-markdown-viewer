@@ -42,12 +42,37 @@ function darkSchematicColors() {
   };
 }
 
+// Drop net-label entries that the trace solver synthesizes for unnamed
+// pin-to-pin connections (e.g. `R1_pin2/LED1_pin1`). These are not nets the
+// schematic author wrote — they're generated at solve time when a trace has
+// no shared `net.NAME` identifier, and they always render as a vertical text
+// blob jutting off the wire midpoint, which clutters every basic schematic.
+//
+// Heuristic: real, author-named labels carry a `source_net_id` linking them
+// back to a `<net>` declaration; synthesized ones do not. We also defensively
+// match the canonical synthetic name shape so we never accidentally drop a
+// label the user actually wrote.
+// Matches `X_pinN/Y_pinM` (2-way) or `X_pinN/Y_pinM/Z_pinK` (N-way) — the
+// canonical synthesized name for an unnamed pin-to-pin connection.
+const SYNTHETIC_LABEL_RE = /^[A-Za-z0-9_]+_pin\d+(?:\/[A-Za-z0-9_]+_pin\d+)+$/;
+function stripSyntheticNetLabels(circuitJson: any[]): any[] {
+  return circuitJson.filter((el) => {
+    if (el?.type !== "schematic_net_label") return true;
+    const hasSource = typeof el.source_net_id === "string" && el.source_net_id.length > 0;
+    if (hasSource) return true;
+    if (typeof el.text === "string" && SYNTHETIC_LABEL_RE.test(el.text)) return false;
+    // No source_net_id and not the canonical synthetic shape — keep it to be safe.
+    return true;
+  });
+}
+
 async function renderSchematic(
   rootEl: HTMLElement,
   tsxCode: string,
   opts: RenderOptions = {}
 ): Promise<void> {
-  const circuitJson = (await runTscircuitCode(tsxCode)) as any[];
+  const rawCircuitJson = (await runTscircuitCode(tsxCode)) as any[];
+  const circuitJson = stripSyntheticNetLabels(rawCircuitJson);
 
   const svg = convertCircuitJsonToSchematicSvg(circuitJson, {
     colorOverrides: opts.isDark ? darkSchematicColors() : undefined,
