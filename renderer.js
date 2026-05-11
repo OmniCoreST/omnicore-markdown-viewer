@@ -1560,16 +1560,9 @@ viewer.addEventListener('click', (e) => {
       }
 
       if (targetElement) {
-        // Calculate the scroll position relative to contentWrapper
-        const contentRect = contentWrapper.getBoundingClientRect();
-        const targetRect = targetElement.getBoundingClientRect();
-        const scrollOffset = targetRect.top - contentRect.top + contentWrapper.scrollTop - 20; // 20px padding from top
-
-        // Scroll the content wrapper to the target
-        contentWrapper.scrollTo({
-          top: scrollOffset,
-          behavior: 'smooth'
-        });
+        // scrollIntoView correctly handles CSS `zoom` on the viewer.
+        // 20px top padding comes from .content-wrapper's scroll-padding-top.
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } else {
         showNotification(i18n('notif.sectionNotFound') + targetId, 3000);
       }
@@ -1954,6 +1947,11 @@ function showFileUpdateNotification() {
   toast.classList.add('show');
   fileUpdateNotificationShown = true;
 
+  // Blink the refresh button until the user reloads or dismisses
+  if (refreshBtn) {
+    refreshBtn.classList.add('blink');
+  }
+
   // Auto-dismiss after 10 seconds
   fileUpdateDismissTimeout = setTimeout(() => {
     dismissFileUpdateNotification();
@@ -1970,6 +1968,13 @@ function dismissFileUpdateNotification() {
   if (fileUpdateDismissTimeout) {
     clearTimeout(fileUpdateDismissTimeout);
     fileUpdateDismissTimeout = null;
+  }
+}
+
+// Stop blinking the refresh button (called on reload, file switch, etc.)
+function stopRefreshBlink() {
+  if (refreshBtn) {
+    refreshBtn.classList.remove('blink');
   }
 }
 
@@ -2504,16 +2509,9 @@ function buildTableOfContents() {
         // Auto-expand any collapsed sections containing this header
         expandToHeader(header.id);
 
-        // Calculate the scroll position relative to contentWrapper
-        const contentRect = contentWrapper.getBoundingClientRect();
-        const headerRect = targetHeader.getBoundingClientRect();
-        const scrollOffset = headerRect.top - contentRect.top + contentWrapper.scrollTop - 20; // 20px padding from top
-
-        // Scroll the content wrapper to the header
-        contentWrapper.scrollTo({
-          top: scrollOffset,
-          behavior: 'smooth'
-        });
+        // scrollIntoView correctly handles CSS `zoom` on the viewer.
+        // 20px top padding comes from .content-wrapper's scroll-padding-top.
+        targetHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         // Update active state
         document.querySelectorAll('.index-item').forEach(i => i.classList.remove('active'));
@@ -3321,11 +3319,18 @@ async function renderMarkdown(content, forceMode = null) {
 
 // Full render pipeline
 async function renderMarkdownFull(content, generation) {
+  // ---- TEMP: render timing diagnostic (remove once perf issue is identified) ----
+  const _t0 = performance.now();
+  const _marks = {};
+  const _mark = (name) => { _marks[name] = performance.now() - _t0; };
+  // -------------------------------------------------------------------------------
+
   // Show loading screen
   showLoadingScreen();
 
   // Give browser time to render the loading screen before heavy processing
   await new Promise(resolve => setTimeout(resolve, 10));
+  _mark('loadingScreenYield');
 
   try {
     // Remove BOM (Byte Order Mark) if present
@@ -3333,6 +3338,7 @@ async function renderMarkdownFull(content, generation) {
 
     // Parse emoji shortcodes (e.g., :star: -> ⭐)
     content = parseEmojis(content);
+    _mark('bomAndEmoji');
 
     // Extract image slider blocks and replace with placeholders
     const sliderBlocks = [];
@@ -3406,8 +3412,11 @@ async function renderMarkdownFull(content, generation) {
       return placeholder;
     });
 
+  _mark('extractBlocks');
+
   // Parse markdown with marked (allows HTML)
   let html = marked.parse(content);
+  _mark('markedParse');
 
   // Protect data URI images from DOMPurify (it strips data: URIs by default)
   const dataUriStore = [];
@@ -3422,6 +3431,7 @@ async function renderMarkdownFull(content, generation) {
     ADD_TAGS: ['iframe', 'style'],
     ADD_ATTR: ['target', 'style', 'class', 'id', 'data-note-id', 'data-note-title', 'data-note-content', 'data-note-color']
   });
+  _mark('sanitize');
 
   // Restore data URI images after sanitization
   dataUriStore.forEach((uri, idx) => {
@@ -3524,8 +3534,11 @@ async function renderMarkdownFull(content, generation) {
       html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), iframeHtml);
     });
 
+  _mark('placeholderRestore');
+
   // Patch only changed DOM nodes — preserves scroll, avoids full relayout
   patchViewerDOM(html);
+  _mark('patchDOM');
 
   // Apply note styles immediately after DOM insertion (before async callbacks)
   applyNoteStyles();
@@ -3605,6 +3618,7 @@ async function renderMarkdownFull(content, generation) {
       }
     });
   }
+  _mark('mermaid');
 
     // Render D2 diagrams in the background — don't block the render pipeline on
     // the 8MB WASM init. Each diagram shows a "Rendering…" placeholder until it resolves.
@@ -3655,21 +3669,28 @@ async function renderMarkdownFull(content, generation) {
 
     // Add maximize buttons to tables
     addTableMaximizeButtons();
+    _mark('tableButtons');
 
     // Initialize image sliders (must run before initImageZoom so slider imgs are wrapped)
     initSliders();
 
     // Initialize image zoom buttons (after sliders so .slider-slide imgs are excluded)
     initImageZoom();
+    _mark('slidersAndZoom');
 
     // Build table of contents
     buildTableOfContents();
+    _mark('toc');
 
     // Make headers collapsible
     makeHeadersCollapsible();
+    _mark('collapsibleHeaders');
 
     // Scroll to top (skip during undo/redo to preserve position)
     if (!undoRedoRendering) viewer.parentElement.scrollTop = 0;
+
+    _mark('beforePrism');
+    console.log('[render] sync phases (ms):', JSON.stringify(_marks));
 
     // Apply syntax highlighting with PrismJS (asynchronously to avoid blocking)
     if (typeof Prism !== 'undefined') {
@@ -3677,11 +3698,13 @@ async function renderMarkdownFull(content, generation) {
       const highlightCallback = window.requestIdleCallback || window.setTimeout;
       highlightCallback(() => {
         if (generation !== renderGeneration) { hideLoadingScreen(); return; } // stale check
+        const _tPrism = performance.now();
         Prism.highlightAll();
         // Mark all as highlighted to support targeted highlighting
         viewer.querySelectorAll('pre code').forEach(el => el.classList.add('prism-highlighted'));
         // Add copy buttons to code blocks after syntax highlighting
         addCodeBlockCopyButtons();
+        console.log('[render] prism+copy (ms):', (performance.now() - _tPrism).toFixed(1));
         // Hide loading screen after syntax highlighting is done
         hideLoadingScreen();
         if (notesPanel.classList.contains('visible')) updateNotesList();
@@ -3991,6 +4014,9 @@ ipcRenderer.on('file-opened', async (event, data) => {
   historyClear();
   _lastRenderedContent = null;
 
+  // New file opened — clear any stale "needs reload" indicator
+  stopRefreshBlink();
+
   // Store original markdown for editor
   originalMarkdown = data.content;
 
@@ -4059,6 +4085,7 @@ ipcRenderer.on('file-deleted', (event, data) => {
   console.log('File deleted:', data.path);
   showNotification(i18n('notif.fileDeleted'), 5000);
   isFileTrackingActive = false;
+  stopRefreshBlink();
 });
 
 // Handle file not found (from recent files or links)
@@ -4095,6 +4122,7 @@ ipcRenderer.on('file-reload-result', async (event, data) => {
     // Start background translation
     startBackgroundTranslation();
 
+    stopRefreshBlink();
     showNotification(i18n('notif.fileReloaded'), 2000);
   } else {
     showNotification(i18n('notif.reloadFailed') + data.error, 4000);

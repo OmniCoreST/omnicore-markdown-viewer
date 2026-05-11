@@ -353,6 +353,38 @@ body.dark-mode .file-info-bar {
   height: 16px;
 }
 
+.nav-btn.blink {
+  color: var(--primary-color);
+  animation: navBtnBlink 1s ease-in-out infinite;
+}
+
+@keyframes navBtnBlink {
+  0%, 100% {
+    background: rgba(39, 158, 167, 0.15);
+    transform: scale(1);
+  }
+  50% {
+    background: rgba(39, 158, 167, 0.45);
+    transform: scale(1.1);
+  }
+}
+
+body.dark-mode .nav-btn.blink {
+  color: #3DBDC6;
+  animation-name: navBtnBlinkDark;
+}
+
+@keyframes navBtnBlinkDark {
+  0%, 100% {
+    background: rgba(61, 189, 198, 0.18);
+    transform: scale(1);
+  }
+  50% {
+    background: rgba(61, 189, 198, 0.5);
+    transform: scale(1.1);
+  }
+}
+
 .nav-separator {
   width: 1px;
   height: 16px;
@@ -437,6 +469,7 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
   width: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  scroll-padding-top: 20px;
 }
 
 /* Split-view mode */
@@ -2121,8 +2154,11 @@ body.dark-mode .app-update-btn.primary:hover {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  padding: 6px 0;
-  min-width: 200px;
+  padding: 4px 0;
+  min-width: 170px;
+  max-width: 220px;
+  max-height: calc(100vh - 20px);
+  overflow-y: auto;
   z-index: 10003;
   display: none;
   animation: contextMenuFadeIn 0.15s ease;
@@ -2146,11 +2182,11 @@ body.dark-mode .app-update-btn.primary:hover {
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: 10px;
+  padding: 6px 12px;
   cursor: pointer;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
   transition: all 0.15s ease;
 }
 
@@ -2170,6 +2206,8 @@ body.dark-mode .app-update-btn.primary:hover {
 }
 
 .context-menu-item svg {
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
   opacity: 0.7;
 }
@@ -2183,7 +2221,7 @@ body.dark-mode .app-update-btn.primary:hover {
 }
 
 .context-menu-item .shortcut {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-secondary);
   opacity: 0.7;
 }
@@ -2191,7 +2229,7 @@ body.dark-mode .app-update-btn.primary:hover {
 .context-menu-separator {
   height: 1px;
   background: var(--border-color);
-  margin: 6px 0;
+  margin: 4px 0;
 }
 
 /* Dark mode context menu */
