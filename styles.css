@@ -472,6 +472,24 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
   scroll-padding-top: 20px;
 }
 
+/* Drag-and-drop file-open overlay */
+body.drop-active::after {
+  content: 'Drop file to open';
+  position: fixed;
+  inset: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--primary-color);
+  background: rgba(39, 158, 167, 0.08);
+  border: 3px dashed var(--primary-color);
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 99999;
+}
+
 /* Split-view mode */
 .content-wrapper.split-view {
   display: flex;
@@ -485,8 +503,8 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
 
 .content-wrapper.split-view #viewer {
   max-width: none;
-  width: 50%;
-  border-left: 1px solid var(--border-color);
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 /* Editor Panel */
@@ -494,8 +512,38 @@ body.dark-mode .nav-btn:hover:not(:disabled) {
   display: none;
   flex-direction: column;
   width: 50%;
+  flex: 0 0 auto;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
+}
+
+/* Draggable splitter between editor and viewer (only visible in split view) */
+.editor-splitter {
+  display: none;
+  flex: 0 0 6px;
+  width: 6px;
+  cursor: col-resize;
+  background: var(--border-color);
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.content-wrapper.split-view .editor-splitter {
+  display: block;
+}
+
+.editor-splitter:hover,
+.editor-splitter.dragging {
+  background: var(--primary-color);
+}
+
+body.splitter-dragging {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+body.splitter-dragging * {
+  user-select: none !important;
 }
 
 .editor-header {
@@ -3023,8 +3071,22 @@ body.dark-mode .context-menu {
    ============================================ */
 
 .mermaid-template-dialog {
-  max-width: 960px;
-  width: 92vw;
+  width: 960px;
+  max-width: 95vw;
+  height: 640px;
+  max-height: 95vh;
+  min-width: 480px;
+  min-height: 420px;
+  resize: both;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.mermaid-template-dialog .note-dialog-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
 }
 
 .mermaid-template-grid {
@@ -3057,7 +3119,9 @@ body.dark-mode .context-menu {
 .mermaid-template-split {
   display: flex;
   gap: 14px;
-  align-items: flex-start;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 220px;
 }
 
 .mermaid-template-editor {
@@ -3065,6 +3129,11 @@ body.dark-mode .context-menu {
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.mermaid-template-editor .mermaid-template-code {
+  flex: 1 1 auto;
+  min-height: 120px;
 }
 
 .mermaid-template-preview-col {
@@ -3075,8 +3144,8 @@ body.dark-mode .context-menu {
 }
 
 .mermaid-template-preview {
-  min-height: 220px;
-  max-height: 340px;
+  flex: 1 1 auto;
+  min-height: 120px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background: var(--bg-secondary);
@@ -3114,8 +3183,27 @@ body.dark-mode .context-menu {
    ============================================ */
 
 .table-insert-dialog {
-  max-width: 540px;
-  width: 90vw;
+  width: 540px;
+  max-width: 95vw;
+  height: auto;
+  max-height: 95vh;
+  min-width: 360px;
+  min-height: 320px;
+  resize: both;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-insert-dialog .note-dialog-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+
+.table-insert-dialog #tableInsertMarkdown {
+  flex: 1 1 auto;
+  min-height: 80px;
 }
 
 .table-dialog-controls {

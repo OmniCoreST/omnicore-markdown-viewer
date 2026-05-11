@@ -406,6 +406,7 @@ const saveButton = document.getElementById('saveButton');
 const exitEditBtn = document.getElementById('exitEditBtn');
 const unsavedIndicator = document.getElementById('unsavedIndicator');
 const contentWrapper = document.querySelector('.content-wrapper');
+const editorSplitter = document.getElementById('editorSplitter');
 const loadingScreen = document.getElementById('loadingScreen');
 const darkModeToggle = document.getElementById('darkModeToggle');
 
@@ -1650,6 +1651,64 @@ if (welcomeReadmeBtn) {
   });
 }
 
+// Drag-and-drop: dropping a file anywhere in the window opens it.
+// A drag counter handles enter/leave bubbling from child elements cleanly.
+(function setupFileDrop() {
+  let dragCounter = 0;
+  const isFileDrag = (e) => {
+    if (!e.dataTransfer) return false;
+    const types = e.dataTransfer.types;
+    if (!types) return false;
+    return Array.from(types).indexOf('Files') !== -1;
+  };
+
+  window.addEventListener('dragenter', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragCounter++;
+    if (dragCounter === 1) document.body.classList.add('drop-active');
+  });
+
+  window.addEventListener('dragover', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+
+  window.addEventListener('dragleave', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragCounter = Math.max(0, dragCounter - 1);
+    if (dragCounter === 0) document.body.classList.remove('drop-active');
+  });
+
+  window.addEventListener('drop', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragCounter = 0;
+    document.body.classList.remove('drop-active');
+
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    // Electron < 32 exposes `file.path` directly; newer versions need webUtils.
+    let filePath = file && file.path;
+    if (!filePath) {
+      try {
+        const { webUtils } = require('electron');
+        if (webUtils && file) filePath = webUtils.getPathForFile(file);
+      } catch (err) { /* webUtils unavailable */ }
+    }
+    if (!filePath) return;
+
+    if (isEditMode && hasUnsavedChanges) {
+      if (!confirm(i18n('confirm.unsavedOpenFile', { name: file.name }))) return;
+    }
+    ipcRenderer.send('open-file-path', filePath);
+  });
+})();
+
 // Refresh button
 refreshBtn.addEventListener('click', () => {
   if (!currentFilePath) {
@@ -2068,6 +2127,62 @@ exitEditBtn.addEventListener('click', () => {
   if (isEditMode) toggleEditBtn.click();
 });
 
+// Editor/Viewer splitter — drag to resize the two panes in split view.
+// Ratio = editor-panel width as a fraction of contentWrapper width (0..1).
+const SPLITTER_MIN_RATIO = 0.15;
+const SPLITTER_MAX_RATIO = 0.85;
+
+function applyEditorSplitRatio(ratio) {
+  const clamped = Math.max(SPLITTER_MIN_RATIO, Math.min(SPLITTER_MAX_RATIO, ratio));
+  editorPanel.style.width = (clamped * 100).toFixed(2) + '%';
+}
+
+try {
+  const saved = parseFloat(localStorage.getItem('editorSplitRatio'));
+  if (!isNaN(saved)) applyEditorSplitRatio(saved);
+} catch (e) { /* localStorage unavailable */ }
+
+editorSplitter && editorSplitter.addEventListener('mousedown', (e) => {
+  if (!contentWrapper.classList.contains('split-view')) return;
+  e.preventDefault();
+
+  const containerRect = contentWrapper.getBoundingClientRect();
+  const splitterWidth = editorSplitter.getBoundingClientRect().width;
+  const usableWidth = containerRect.width - splitterWidth;
+  if (usableWidth <= 0) return;
+
+  editorSplitter.classList.add('dragging');
+  document.body.classList.add('splitter-dragging');
+
+  let currentRatio = null;
+
+  const onMove = (ev) => {
+    const offset = ev.clientX - containerRect.left;
+    const ratio = offset / usableWidth;
+    currentRatio = Math.max(SPLITTER_MIN_RATIO, Math.min(SPLITTER_MAX_RATIO, ratio));
+    editorPanel.style.width = (currentRatio * 100).toFixed(2) + '%';
+  };
+
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    editorSplitter.classList.remove('dragging');
+    document.body.classList.remove('splitter-dragging');
+    if (currentRatio !== null) {
+      try { localStorage.setItem('editorSplitRatio', String(currentRatio)); } catch (err) { /* ignore */ }
+    }
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+});
+
+// Double-click splitter → reset to 50/50
+editorSplitter && editorSplitter.addEventListener('dblclick', () => {
+  applyEditorSplitRatio(0.5);
+  try { localStorage.setItem('editorSplitRatio', '0.5'); } catch (e) { /* ignore */ }
+});
+
 // Tab key → insert 2 spaces (prevent focus change)
 markdownEditor.addEventListener('keydown', (e) => {
   if (e.key === 'Tab') {
@@ -2154,14 +2269,16 @@ function skipPastCodeBlock(content, insertPos) {
   return insertPos;
 }
 
-// Save file
+// Save file. In edit mode the textarea is the source of truth; in view mode it
+// may be stale (view-mode edits update `originalMarkdown` directly), so save
+// `originalMarkdown` instead.
 function saveMarkdownFile() {
   if (!currentFilePath) {
     alert(i18n('alert.noFileOpen'));
     return;
   }
 
-  const content = markdownEditor.value;
+  const content = isEditMode ? markdownEditor.value : originalMarkdown;
   ipcRenderer.send('save-markdown-file', {
     filePath: currentFilePath,
     content: content
@@ -2213,8 +2330,13 @@ document.addEventListener('keydown', (e) => {
 // Handle save result
 ipcRenderer.on('save-markdown-result', (event, data) => {
   if (data.success) {
-    originalMarkdown = markdownEditor.value;
-    invalidateTranslationCache();
+    // Only sync originalMarkdown from the editor when in edit mode — in view
+    // mode originalMarkdown is already the source of truth and the editor may
+    // be stale.
+    if (isEditMode) {
+      originalMarkdown = markdownEditor.value;
+      invalidateTranslationCache();
+    }
     hasUnsavedChanges = false;
     updateUnsavedIndicator();
     console.log('File saved successfully');
@@ -3319,18 +3441,11 @@ async function renderMarkdown(content, forceMode = null) {
 
 // Full render pipeline
 async function renderMarkdownFull(content, generation) {
-  // ---- TEMP: render timing diagnostic (remove once perf issue is identified) ----
-  const _t0 = performance.now();
-  const _marks = {};
-  const _mark = (name) => { _marks[name] = performance.now() - _t0; };
-  // -------------------------------------------------------------------------------
-
   // Show loading screen
   showLoadingScreen();
 
   // Give browser time to render the loading screen before heavy processing
   await new Promise(resolve => setTimeout(resolve, 10));
-  _mark('loadingScreenYield');
 
   try {
     // Remove BOM (Byte Order Mark) if present
@@ -3338,7 +3453,6 @@ async function renderMarkdownFull(content, generation) {
 
     // Parse emoji shortcodes (e.g., :star: -> ⭐)
     content = parseEmojis(content);
-    _mark('bomAndEmoji');
 
     // Extract image slider blocks and replace with placeholders
     const sliderBlocks = [];
@@ -3412,11 +3526,8 @@ async function renderMarkdownFull(content, generation) {
       return placeholder;
     });
 
-  _mark('extractBlocks');
-
   // Parse markdown with marked (allows HTML)
   let html = marked.parse(content);
-  _mark('markedParse');
 
   // Protect data URI images from DOMPurify (it strips data: URIs by default)
   const dataUriStore = [];
@@ -3431,7 +3542,6 @@ async function renderMarkdownFull(content, generation) {
     ADD_TAGS: ['iframe', 'style'],
     ADD_ATTR: ['target', 'style', 'class', 'id', 'data-note-id', 'data-note-title', 'data-note-content', 'data-note-color']
   });
-  _mark('sanitize');
 
   // Restore data URI images after sanitization
   dataUriStore.forEach((uri, idx) => {
@@ -3534,11 +3644,8 @@ async function renderMarkdownFull(content, generation) {
       html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), iframeHtml);
     });
 
-  _mark('placeholderRestore');
-
   // Patch only changed DOM nodes — preserves scroll, avoids full relayout
   patchViewerDOM(html);
-  _mark('patchDOM');
 
   // Apply note styles immediately after DOM insertion (before async callbacks)
   applyNoteStyles();
@@ -3618,7 +3725,6 @@ async function renderMarkdownFull(content, generation) {
       }
     });
   }
-  _mark('mermaid');
 
     // Render D2 diagrams in the background — don't block the render pipeline on
     // the 8MB WASM init. Each diagram shows a "Rendering…" placeholder until it resolves.
@@ -3669,28 +3775,21 @@ async function renderMarkdownFull(content, generation) {
 
     // Add maximize buttons to tables
     addTableMaximizeButtons();
-    _mark('tableButtons');
 
     // Initialize image sliders (must run before initImageZoom so slider imgs are wrapped)
     initSliders();
 
     // Initialize image zoom buttons (after sliders so .slider-slide imgs are excluded)
     initImageZoom();
-    _mark('slidersAndZoom');
 
     // Build table of contents
     buildTableOfContents();
-    _mark('toc');
 
     // Make headers collapsible
     makeHeadersCollapsible();
-    _mark('collapsibleHeaders');
 
     // Scroll to top (skip during undo/redo to preserve position)
     if (!undoRedoRendering) viewer.parentElement.scrollTop = 0;
-
-    _mark('beforePrism');
-    console.log('[render] sync phases (ms):', JSON.stringify(_marks));
 
     // Apply syntax highlighting with PrismJS (asynchronously to avoid blocking)
     if (typeof Prism !== 'undefined') {
@@ -3698,13 +3797,11 @@ async function renderMarkdownFull(content, generation) {
       const highlightCallback = window.requestIdleCallback || window.setTimeout;
       highlightCallback(() => {
         if (generation !== renderGeneration) { hideLoadingScreen(); return; } // stale check
-        const _tPrism = performance.now();
         Prism.highlightAll();
         // Mark all as highlighted to support targeted highlighting
         viewer.querySelectorAll('pre code').forEach(el => el.classList.add('prism-highlighted'));
         // Add copy buttons to code blocks after syntax highlighting
         addCodeBlockCopyButtons();
-        console.log('[render] prism+copy (ms):', (performance.now() - _tPrism).toFixed(1));
         // Hide loading screen after syntax highlighting is done
         hideLoadingScreen();
         if (notesPanel.classList.contains('visible')) updateNotesList();
@@ -4986,6 +5083,35 @@ function findNthOccurrence(source, searchStr, n) {
   return pos;
 }
 
+// Find a DOM-selected plain-text run inside markdown source, tolerating inline
+// formatting markers (`*`, `_`, `` ` ``, `~`) that exist in source but not in
+// the rendered DOM selection (e.g., selecting across an italic span).
+// Returns { index, length } in source, or null if not found.
+function findPlainTextInSource(source, plainText, occurrence) {
+  const exact = findNthOccurrence(source, plainText, occurrence);
+  if (exact !== -1) return { index: exact, length: plainText.length };
+
+  let projection = '';
+  const map = [];
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '*' || ch === '_' || ch === '`' || ch === '~') continue;
+    map.push(i);
+    projection += ch;
+  }
+
+  let pos = -1;
+  for (let i = 0; i <= occurrence; i++) {
+    pos = projection.indexOf(plainText, pos + 1);
+    if (pos === -1) return null;
+  }
+
+  const startInSource = map[pos];
+  const afterPos = pos + plainText.length;
+  const endInSource = afterPos < map.length ? map[afterPos] : source.length;
+  return { index: startInSource, length: endInSource - startInSource };
+}
+
 function getNextNoteId(source) {
   let maxId = 0;
   const idMatches = source.matchAll(/data-note-id="(\d+)"/g);
@@ -5806,8 +5932,8 @@ editTextSaveBtn.addEventListener('click', () => {
   } else {
     // View mode — try partial render first, then fall back to full re-render
     const activeSource = getActiveMarkdown();
-    const textIndex = findNthOccurrence(activeSource, editTextOriginal, editTextOccurrence);
-    if (textIndex === -1) {
+    const found = findPlainTextInSource(activeSource, editTextOriginal, editTextOccurrence);
+    if (!found) {
       showNotification(i18n('notif.textNotFound'), 2000);
       closeEditTextDialog();
       return;
@@ -5816,7 +5942,11 @@ editTextSaveBtn.addEventListener('click', () => {
     // Check if structural markdown change (newlines changed) — needs full re-render
     const structuralChange = newText.includes('\n') !== editTextOriginal.includes('\n');
 
-    if (!structuralChange && partialDOMReplace(viewer, editTextOriginal, newText, editTextOccurrence)) {
+    // partialDOMReplace only works when the selection fits a single text node
+    // and the source match is exact (no formatting markers were spanned).
+    const isExactSourceMatch = found.length === editTextOriginal.length;
+
+    if (!structuralChange && isExactSourceMatch && partialDOMReplace(viewer, editTextOriginal, newText, editTextOccurrence)) {
       // Partial render succeeded — update source silently without re-rendering
       updateSourceSilently(editTextOriginal, newText, editTextOccurrence);
       showNotification(i18n('notif.textEdited'), 1500);
@@ -5824,22 +5954,16 @@ editTextSaveBtn.addEventListener('click', () => {
       // Fall back to full re-render
       const scrollPosition = contentWrapper.scrollTop;
       const newContent =
-        activeSource.substring(0, textIndex) +
+        activeSource.substring(0, found.index) +
         newText +
-        activeSource.substring(textIndex + editTextOriginal.length);
+        activeSource.substring(found.index + found.length);
 
       commitViewModeEdit(newContent, scrollPosition, () => {
         const origText = findOriginalForTranslated(editTextOriginal);
-        if (origText) {
-          const oi = findNthOccurrence(originalMarkdown, origText, editTextOccurrence);
-          if (oi !== -1) {
-            originalMarkdown = originalMarkdown.substring(0, oi) + newText + originalMarkdown.substring(oi + origText.length);
-          }
-        } else {
-          const oi = findNthOccurrence(originalMarkdown, editTextOriginal, editTextOccurrence);
-          if (oi !== -1) {
-            originalMarkdown = originalMarkdown.substring(0, oi) + newText + originalMarkdown.substring(oi + editTextOriginal.length);
-          }
+        const lookup = origText || editTextOriginal;
+        const oFound = findPlainTextInSource(originalMarkdown, lookup, editTextOccurrence);
+        if (oFound) {
+          originalMarkdown = originalMarkdown.substring(0, oFound.index) + newText + originalMarkdown.substring(oFound.index + oFound.length);
         }
       });
 
@@ -7148,6 +7272,11 @@ async function insertMermaidFromDialog() {
     syncEditorWithStore();
 
     await renderMermaidInDOM(code, 'replace', editTarget);
+
+    // View-mode edits have no manual save UI — persist immediately so changes
+    // survive a reload. (Edit mode keeps Ctrl+S/Save button semantics.)
+    if (!isEditMode && currentFilePath) saveMarkdownFile();
+
     showNotification('Mermaid updated', 1500);
 
   } else {
