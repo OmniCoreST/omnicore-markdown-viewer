@@ -33,7 +33,7 @@ initializeMermaidWithTheme();
 
 // Configure marked
 marked.setOptions({
-  breaks: true,
+  breaks: false,
   gfm: true,
   headerIds: true,
   mangle: false,
@@ -60,7 +60,7 @@ const UI_STRINGS = {
     'open': 'Open', 'edit': 'Edit', 'pdf': 'PDF', 'word': 'Word',
     'file': 'File', 'title.file': 'File',
     'openFile': 'Open File', 'export': 'Export',
-    'exportPdf': 'Export as PDF', 'exportWord': 'Export as Word',
+    'exportPdf': 'Export as PDF', 'exportWord': 'Export as Word', 'exportHtml': 'Export as HTML',
     'history': 'History', 'editMode': 'Edit Mode',
     'allNotes': 'All Notes', 'noNotes': 'No notes found',
     'view': 'View', 'title.view': 'View',
@@ -121,8 +121,12 @@ const UI_STRINGS = {
     'notif.sectionNotFound': 'Section not found: ',
     'notif.fileNotFound': 'File not found: ',
     'notif.preparingWord': 'Preparing Word export...',
+    'notif.preparingHtml': 'Preparing HTML export...',
     'notif.pdfExported': 'PDF exported: ',
     'notif.wordExported': 'Word exported: ',
+    'notif.htmlExported': 'HTML exported: ',
+    'notif.htmlExportFailed': 'HTML export failed: ',
+    'alert.htmlError': 'Error exporting HTML: ',
     'notif.copyFailed': 'Failed to copy to clipboard',
     'notif.fileDeleted': 'Warning: The opened file has been deleted from disk',
     'notif.fileReloaded': 'File reloaded successfully',
@@ -183,7 +187,7 @@ const UI_STRINGS = {
     'open': 'Aç', 'edit': 'Düzenle', 'pdf': 'PDF', 'word': 'Word',
     'file': 'Dosya', 'title.file': 'Dosya',
     'openFile': 'Dosya Aç', 'export': 'Dışa Aktar',
-    'exportPdf': 'PDF Olarak Dışa Aktar', 'exportWord': 'Word Olarak Dışa Aktar',
+    'exportPdf': 'PDF Olarak Dışa Aktar', 'exportWord': 'Word Olarak Dışa Aktar', 'exportHtml': 'HTML Olarak Dışa Aktar',
     'history': 'Geçmiş', 'editMode': 'Düzenleme Modu',
     'allNotes': 'Tüm Notlar', 'noNotes': 'Not bulunamadı',
     'view': 'Görünüm', 'title.view': 'Görünüm',
@@ -244,8 +248,12 @@ const UI_STRINGS = {
     'notif.sectionNotFound': 'Bölüm bulunamadı: ',
     'notif.fileNotFound': 'Dosya bulunamadı: ',
     'notif.preparingWord': 'Word dışa aktarma hazırlanıyor...',
+    'notif.preparingHtml': 'HTML dışa aktarma hazırlanıyor...',
     'notif.pdfExported': 'PDF dışa aktarıldı: ',
     'notif.wordExported': 'Word dışa aktarıldı: ',
+    'notif.htmlExported': 'HTML dışa aktarıldı: ',
+    'notif.htmlExportFailed': 'HTML dışa aktarma başarısız: ',
+    'alert.htmlError': 'HTML dışa aktarma hatası: ',
     'notif.copyFailed': 'Panoya kopyalama başarısız',
     'notif.fileDeleted': 'Uyarı: Açılan dosya diskten silinmiş',
     'notif.fileReloaded': 'Dosya başarıyla yenilendi',
@@ -399,6 +407,7 @@ const filePath = document.getElementById('filePath');
 const refreshBtn = document.getElementById('refreshBtn');
 const exportPdfBtn = document.getElementById('exportPdf');
 const exportWordBtn = document.getElementById('exportWord');
+const exportHtmlBtn = document.getElementById('exportHtml');
 const toggleEditBtn = document.getElementById('toggleEdit');
 const editorPanel = document.getElementById('editorPanel');
 const markdownEditor = document.getElementById('markdownEditor');
@@ -1968,6 +1977,73 @@ exportWordBtn.addEventListener('click', async () => {
   }
 });
 
+// Export to standalone HTML (with assets in a sibling .files/ subfolder)
+exportHtmlBtn.addEventListener('click', async () => {
+  fileMenu.classList.remove('visible');
+  if (!currentFilePath) {
+    alert(i18n('alert.openFirst'));
+    return;
+  }
+
+  try {
+    showNotification(i18n('notif.preparingHtml'), 10000);
+
+    const pathParts = currentFilePath.split(/[\\/]/);
+    const currentFileName = pathParts.pop();
+
+    // Clone the rendered viewer and strip interactive-only UI controls
+    const viewerClone = viewer.cloneNode(true);
+    viewerClone.querySelectorAll([
+      '.mermaid-maximize-btn', '.table-maximize-btn', '.code-copy-btn',
+      '.omniware-maximize-btn', '.d2-maximize-btn', '.tscircuit-maximize-btn',
+      '.img-zoom-btn', '.note-edit-btn', '.note-delete-btn',
+      '.slider-btn', '.slider-dots', '.slider-counter', '.slider-footer'
+    ].join(', ')).forEach(el => el.remove());
+
+    // Drop the welcome screen if it somehow ended up in the export
+    viewerClone.querySelectorAll('.welcome').forEach(el => el.remove());
+
+    // Collect image src values so the main process can copy local files into the assets folder.
+    // Data-URI images are kept inline; only file:// and absolute paths are extracted for copying.
+    const images = [];
+    viewerClone.querySelectorAll('img').forEach((img, idx) => {
+      const src = img.getAttribute('src') || '';
+      if (!src) return;
+      if (src.startsWith('data:')) return; // inline, no copy needed
+      // Mark img with a placeholder; main process will rewrite it after copying the file
+      const token = `__OMNICORE_IMG_${idx}__`;
+      img.setAttribute('src', token);
+      images.push({ token, originalSrc: src });
+    });
+
+    const bodyHtml = viewerClone.innerHTML;
+    const isDark = document.body.classList.contains('dark-mode');
+    const isCorporate = document.body.classList.contains('corporate-mode');
+
+    ipcRenderer.send('export-html', {
+      currentFileName,
+      currentFilePath,
+      bodyHtml,
+      images,
+      isDark,
+      isCorporate,
+      title: currentFileName.replace(/\.[^/.]+$/, '')
+    });
+  } catch (err) {
+    console.error('HTML export error:', err);
+    alert(i18n('alert.htmlError') + err.message);
+  }
+});
+
+// Result listener for HTML export
+ipcRenderer.on('html-export-result', (event, result) => {
+  if (result.success) {
+    showNotification(i18n('notif.htmlExported') + result.path, 4000);
+  } else {
+    showNotification(i18n('notif.htmlExportFailed') + (result.error || ''), 4000);
+  }
+});
+
 // Show notification toast
 function showNotification(message, duration = 3000) {
   const toast = document.getElementById('notificationToast');
@@ -3338,13 +3414,13 @@ function renderLightFormat(content, generation) {
   // Restore mermaid placeholders — patchViewerDOM will keep existing SVGs for same source
   mermaidBlocks.forEach(({ ph, code }) => {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    html = html.replace(ph, `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`);
+    html = html.replace(new RegExp(`<p>${ph}</p>|${ph}`), `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`);
   });
 
   // Restore d2 placeholders as stub divs (renderD2Diagrams below will fill them in)
   d2BlocksLF.forEach(({ ph, code }) => {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    html = html.replace(ph, `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`);
+    html = html.replace(new RegExp(`<p>${ph}</p>|${ph}`), `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`);
   });
 
   // Restore @@@html placeholders as sandboxed iframes
@@ -3577,14 +3653,14 @@ async function renderMarkdownFull(content, generation) {
   mermaidBlocks.forEach(({ placeholder, code }) => {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     const mermaidDiv = `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`;
-    html = html.replace(placeholder, mermaidDiv);
+    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), mermaidDiv);
   });
 
   // Replace placeholders with d2 stub divs (rendered async after DOM insertion)
   d2Blocks.forEach(({ placeholder, code }) => {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     const d2Div = `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`;
-    html = html.replace(placeholder, d2Div);
+    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), d2Div);
   });
 
   // Replace placeholders with tscircuit stub divs (rendered async — first load
@@ -3592,7 +3668,7 @@ async function renderMarkdownFull(content, generation) {
   tscircuitBlocks.forEach(({ placeholder, code }) => {
     const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const tscircuitDiv = `<div class="tscircuit" data-tscircuit-src="${escapedSrc}"><div class="tscircuit-placeholder">Rendering tscircuit schematic…</div></div>`;
-    html = html.replace(placeholder, tscircuitDiv);
+    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), tscircuitDiv);
   });
 
     // Replace placeholders with rendered omniware wireframes
@@ -3601,12 +3677,12 @@ async function renderMarkdownFull(content, generation) {
         const renderedHtml = OmniWare.toHTML(code);
         const escapedDsl = code.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const omniwareDiv = `<div class="omniware-rendered" data-omniware-dsl="${escapedDsl}">${renderedHtml}</div>`;
-        html = html.replace(placeholder, omniwareDiv);
+        html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), omniwareDiv);
       } catch (err) {
         const errorDiv = `<div style="color: red; padding: 20px; background: #ffe6e6; border: 1px solid #ff0000; border-radius: 4px;">
           <strong>OmniWare Rendering Error:</strong><br>${err.message}
         </div>`;
-        html = html.replace(placeholder, errorDiv);
+        html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), errorDiv);
       }
     });
 

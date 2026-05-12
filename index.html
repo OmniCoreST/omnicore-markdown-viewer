@@ -6,13 +6,10 @@
   <title>Omnicore Markdown Viewer</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="libs/prismjs/themes/prism-solarizedlight.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <noscript><link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap" rel="stylesheet"></noscript>
-  <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="libs/fonts/firacode.css">
+  <script src="libs/marked/marked.min.js"></script>
+  <script src="libs/mermaid/mermaid.min.js"></script>
+  <script src="libs/dompurify/purify.min.js"></script>
   <!-- PrismJS - Bundled Core and Language Components -->
   <script src="libs/prismjs/prism-bundle.js"></script>
   <!-- D2 (WASM) bridge: ESM import lazily on first use, exposed as window.loadD2() -->
@@ -34,6 +31,37 @@
   <script>
     window.loadTscircuit = function() {
       if (window._tscircuitPromise) return window._tscircuitPromise;
+      // Keep schematic rendering fully offline: the bundle bakes in fetches to
+      // jlcsearch / registry-api / modelcdn / easyeda etc. for parts lookup.
+      // Short-circuit them with a 404 — the bundle already tolerates that path.
+      if (!window._tscircuitFetchWrapped) {
+        const originalFetch = window.fetch.bind(window);
+        const BLOCKED = /^https?:\/\/([a-z0-9-]+\.)?(tscircuit\.com|easyeda\.com)(\/|$)/i;
+        window.fetch = function(input, init) {
+          const url = typeof input === 'string' ? input : (input && input.url) || '';
+          if (BLOCKED.test(url)) {
+            return Promise.resolve(new Response('', { status: 404, statusText: 'Offline mode' }));
+          }
+          return originalFetch(input, init);
+        };
+        window._tscircuitFetchWrapped = true;
+      }
+      // Suppress tscircuit PCB-autorouter noise — these are async effect errors
+      // logged by the bundle when capacity-autorouter fails to converge on a
+      // dense board. They don't affect schematic SVG rendering.
+      if (!window._tscircuitConsoleWrapped) {
+        const originalConsoleError = console.error.bind(console);
+        const SUPPRESS = /AutorouterError|capacity-mesh-autorouting|Async effect error in PcbTraceRender/;
+        console.error = function(...args) {
+          const first = args[0];
+          const msg = typeof first === 'string' ? first
+                    : (first && first.message) ? first.message
+                    : '';
+          if (SUPPRESS.test(msg)) return;
+          originalConsoleError(...args);
+        };
+        window._tscircuitConsoleWrapped = true;
+      }
       window._tscircuitPromise = new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = './libs/tscircuit/tscircuit-bundle.js';
@@ -90,6 +118,9 @@
             </div>
             <div class="tools-menu-item" id="exportWord">
               <span data-i18n="exportWord">Export as Word</span>
+            </div>
+            <div class="tools-menu-item" id="exportHtml">
+              <span data-i18n="exportHtml">Export as HTML</span>
             </div>
             <div class="tools-menu-separator"></div>
             <div class="tools-menu-header" data-i18n="history">History</div>

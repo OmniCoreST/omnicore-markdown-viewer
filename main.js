@@ -777,6 +777,139 @@ ipcMain.on('export-word-corporate', async (event, data) => {
   }
 });
 
+// ============================================
+// HTML EXPORT
+// ============================================
+// Export the rendered viewer to a self-contained .html file plus a sibling
+// "<name>.files/" folder holding the stylesheet and any referenced local images.
+ipcMain.on('export-html', async (event, data) => {
+  try {
+    const { currentFileName, currentFilePath, bodyHtml, images, isDark, isCorporate, title } = data;
+
+    const nameWithoutExt = (currentFileName || 'document').replace(/\.[^/.]+$/, '');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export to HTML',
+      defaultPath: `${nameWithoutExt}.html`,
+      filters: [
+        { name: 'HTML Document', extensions: ['html'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+    if (result.canceled || !result.filePath) return;
+
+    const outHtmlPath = result.filePath;
+    const outDir = path.dirname(outHtmlPath);
+    const outBase = path.basename(outHtmlPath, path.extname(outHtmlPath));
+    const assetsDirName = `${outBase}.files`;
+    const assetsDir = path.join(outDir, assetsDirName);
+    fs.mkdirSync(assetsDir, { recursive: true });
+
+    const appRoot = app.getAppPath();
+
+    // Copy the main stylesheet and the PrismJS theme so the export is fully offline-renderable.
+    const filesToCopy = [
+      { src: path.join(appRoot, 'styles.css'), dest: path.join(assetsDir, 'styles.css') },
+      { src: path.join(appRoot, 'libs/prismjs/themes/prism-solarizedlight.css'), dest: path.join(assetsDir, 'prism-solarizedlight.css') },
+      { src: path.join(appRoot, 'libs/prismjs/themes/prism-tomorrow.css'), dest: path.join(assetsDir, 'prism-tomorrow.css') }
+    ];
+    filesToCopy.forEach(f => { try { fs.copyFileSync(f.src, f.dest); } catch (e) { /* optional asset */ } });
+
+    // Copy referenced images and rewrite their src tokens to point at the assets folder.
+    let processedHtml = bodyHtml;
+    const markdownDir = currentFilePath ? path.dirname(currentFilePath) : outDir;
+    const usedNames = new Set();
+    (images || []).forEach(({ token, originalSrc }) => {
+      let resolved = originalSrc;
+      try {
+        // Strip file:// prefix if present
+        if (resolved.startsWith('file://')) {
+          resolved = decodeURI(resolved.replace(/^file:\/\/\/?/, ''));
+          if (process.platform !== 'win32' && !resolved.startsWith('/')) resolved = '/' + resolved;
+        }
+        // Resolve relative paths against the source markdown directory
+        if (!path.isAbsolute(resolved)) {
+          resolved = path.resolve(markdownDir, resolved);
+        }
+      } catch (e) { /* fall through, copy attempt will fail and we keep the original src */ }
+
+      let rewritten = originalSrc;
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+        let baseName = path.basename(resolved);
+        // Avoid filename collisions in the assets folder
+        let finalName = baseName;
+        let i = 1;
+        while (usedNames.has(finalName.toLowerCase())) {
+          const ext = path.extname(baseName);
+          const stem = path.basename(baseName, ext);
+          finalName = `${stem}-${i}${ext}`;
+          i++;
+        }
+        usedNames.add(finalName.toLowerCase());
+        try {
+          fs.copyFileSync(resolved, path.join(assetsDir, finalName));
+          rewritten = `${assetsDirName}/${finalName}`;
+        } catch (e) { /* keep original src on copy failure */ }
+      }
+
+      // Replace the token (which we placed in the src attribute) with the rewritten path
+      const tokenRe = new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+      processedHtml = processedHtml.replace(tokenRe, rewritten);
+    });
+
+    // Wrapper styles: only the rules needed so the standalone file looks like the in-app viewer,
+    // without dragging in editor-specific UI chrome.
+    const bodyClasses = ['markdown-body'];
+    if (isDark) bodyClasses.push('dark-mode');
+    if (isCorporate) bodyClasses.push('corporate-mode');
+
+    const escapeHtml = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const escapedTitle = escapeHtml(title || nameWithoutExt);
+
+    const fullHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapedTitle}</title>
+  <link rel="stylesheet" href="${assetsDirName}/styles.css">
+  <link rel="stylesheet" href="${assetsDirName}/prism-solarizedlight.css">
+  <style>
+    /* Export-only overrides: the standalone document has no toolbar/sidebars, so the viewer
+       should occupy the full page and skip in-app interactive affordances. */
+    html, body { margin: 0; padding: 0; background: var(--bg-primary, #ffffff); }
+    body.dark-mode { background: var(--bg-primary, #1a1a1a); }
+    #viewer-export {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      line-height: 1.8;
+    }
+    .collapsible-section { overflow: visible !important; max-height: none !important; display: block !important; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3,
+    .markdown-body h4, .markdown-body h5, .markdown-body h6 { cursor: default; }
+    .markdown-body h1::before, .markdown-body h2::before, .markdown-body h3::before,
+    .markdown-body h4::before, .markdown-body h5::before, .markdown-body h6::before { content: none; }
+  </style>
+</head>
+<body class="${bodyClasses.join(' ')}">
+  <div id="viewer-export" class="markdown-body">
+${processedHtml}
+  </div>
+</body>
+</html>`;
+
+    fs.writeFile(outHtmlPath, fullHtml, 'utf8', (err) => {
+      if (err) {
+        mainWindow.webContents.send('html-export-result', { success: false, error: err.message });
+      } else {
+        mainWindow.webContents.send('html-export-result', { success: true, path: outHtmlPath });
+      }
+    });
+  } catch (error) {
+    mainWindow.webContents.send('html-export-result', { success: false, error: error.message });
+  }
+});
+
 // Handle markdown file save request from renderer
 ipcMain.on('save-markdown-file', (event, data) => {
   try {
