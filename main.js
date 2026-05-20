@@ -1103,9 +1103,10 @@ ipcMain.on('open-mermaid-popup', (event, data) => {
         #svg-container-wrapper:active {
             cursor: grabbing;
         }
-        #viewport {
-            will-change: transform;
-        }
+        /* No will-change/compositing hint: it caches a single rasterization of the
+           SVG and stretches that bitmap on zoom, blurring text. Without it the
+           browser re-rasterizes the vector SVG crisply at the current scale. */
+        #viewport { transform-origin: 0 0; }
     </style>
 </head>
 <body>
@@ -1458,7 +1459,8 @@ ipcMain.on('open-d2-popup', (event, data) => {
         button:disabled { background-color: ${isDarkMode ? '#555' : '#ccc'}; cursor: not-allowed; }
         #svg-container-wrapper { cursor: grab; overflow: hidden; }
         #svg-container-wrapper:active { cursor: grabbing; }
-        #viewport { will-change: transform; }
+        /* No will-change: it caches one rasterization and stretches it on zoom, blurring the SVG. */
+        #viewport { transform-origin: 0 0; }
     </style>
 </head>
 <body>
@@ -1743,7 +1745,8 @@ ipcMain.on('open-tscircuit-popup', (event, data) => {
         button:disabled { background-color: ${isDarkMode ? '#555' : '#ccc'}; cursor: not-allowed; }
         #svg-container-wrapper { cursor: grab; overflow: hidden; }
         #svg-container-wrapper:active { cursor: grabbing; }
-        #viewport { will-change: transform; }
+        /* No will-change: it caches one rasterization and stretches it on zoom, blurring the SVG. */
+        #viewport { transform-origin: 0 0; }
     </style>
 </head>
 <body>

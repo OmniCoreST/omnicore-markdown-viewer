@@ -1204,7 +1204,9 @@ async function updateMermaidTheme(isDark) {
   if (toRender.length === 0) return;
 
   try {
-    await mermaid.run({ nodes: toRender, suppressErrors: false });
+    // suppressErrors: true — keep an invalid diagram from aborting the whole
+    // re-theme batch (matches the main render path).
+    await mermaid.run({ nodes: toRender, suppressErrors: true });
     toRender.forEach(el => {
       if (el.dataset.mermaidSrc && el.querySelector('svg')) {
         mermaidSvgCache.set(el.dataset.mermaidSrc, el.innerHTML);
@@ -3748,9 +3750,12 @@ async function renderMarkdownFull(content, generation) {
         }
       });
 
-      // Only render new/changed diagrams
+      // Only render new/changed diagrams.
+      // suppressErrors: true so a single invalid diagram renders an inline error
+      // graphic instead of throwing — otherwise the throw would skip the
+      // maximize-button loop below and strip the pop-out button from every diagram.
       if (toRender.length > 0) {
-        await mermaid.run({ nodes: toRender, suppressErrors: false });
+        await mermaid.run({ nodes: toRender, suppressErrors: true });
         // Store newly rendered SVGs in cache
         toRender.forEach(el => {
           if (el.querySelector('svg')) {

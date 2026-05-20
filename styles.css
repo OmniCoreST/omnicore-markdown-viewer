@@ -863,6 +863,19 @@ body.splitter-dragging * {
   border: 1px solid var(--border-color);
 }
 
+/* Sequence-diagram actor lifelines.
+   Mermaid 10.6.1 has a bug at sequenceRenderer.js where .attr("class","actor-line")
+   is overwritten by .attr("class","200"), so the .actor-line CSS rule (driven by
+   themeVariables.actorLineColor) never matches. The id="actorN" attribute is set
+   correctly, so we target via id and also bump stroke-width up from the default 0.5px. */
+.mermaid line[id^="actor"] {
+  stroke: #888 !important;
+  stroke-width: 1.5px !important;
+}
+body.dark-mode .mermaid line[id^="actor"] {
+  stroke: #777 !important;
+}
+
 /* Welcome screen */
 .welcome {
   text-align: center;
