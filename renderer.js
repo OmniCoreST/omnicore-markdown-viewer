@@ -3345,16 +3345,28 @@ function _getBlockHash(el) {
 
 // Resolve relative image paths against the open file's folder. The window is loaded
 // from the app's own index.html, so without this, relative srcs resolve against the
-// app directory and never load. Runs on the DOM after sanitization, so file:// URLs
-// are not subject to DOMPurify's URI allowlist.
+// app directory and never load. Images are inlined as data URIs (same mechanism as
+// the insert-image feature) — runs on the DOM after sanitization, and unlike file://
+// URLs is not subject to DOMPurify's URI allowlist or file: subresource policies.
+const IMG_MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
+  '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif'
+};
+
 function resolveRelativeImageSrcs() {
   if (!currentFilePath) return;
   const dir = path.dirname(currentFilePath);
   viewer.querySelectorAll('img').forEach(img => {
     const src = img.getAttribute('src') || '';
-    if (src && !/^(data:|https?:|file:|blob:)/i.test(src)) {
-      img.src = 'file:///' + path.resolve(dir, decodeURIComponent(src)).replace(/\\/g, '/');
-    }
+    if (!src || /^(data:|https?:|file:|blob:)/i.test(src)) return;
+    try {
+      const abs = path.resolve(dir, decodeURIComponent(src));
+      const mime = IMG_MIME_BY_EXT[path.extname(abs).toLowerCase()];
+      if (mime && fs.existsSync(abs)) {
+        img.src = `data:${mime};base64,${fs.readFileSync(abs).toString('base64')}`;
+      }
+    } catch (e) { /* leave src as-is */ }
   });
 }
 
