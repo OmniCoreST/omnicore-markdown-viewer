@@ -3343,6 +3343,21 @@ function _getBlockHash(el) {
   return null;
 }
 
+// Resolve relative image paths against the open file's folder. The window is loaded
+// from the app's own index.html, so without this, relative srcs resolve against the
+// app directory and never load. Runs on the DOM after sanitization, so file:// URLs
+// are not subject to DOMPurify's URI allowlist.
+function resolveRelativeImageSrcs() {
+  if (!currentFilePath) return;
+  const dir = path.dirname(currentFilePath);
+  viewer.querySelectorAll('img').forEach(img => {
+    const src = img.getAttribute('src') || '';
+    if (src && !/^(data:|https?:|file:|blob:)/i.test(src)) {
+      img.src = 'file:///' + path.resolve(dir, decodeURIComponent(src)).replace(/\\/g, '/');
+    }
+  });
+}
+
 // Patch viewer's top-level children in-place — only replace nodes that actually changed.
 // Unchanged nodes (same hash) are left untouched, preserving scroll position and event listeners.
 function patchViewerDOM(newHtml) {
@@ -3479,6 +3494,7 @@ function renderLightFormat(content, generation) {
   if (generation !== renderGeneration) return;
 
   patchViewerDOM(html);
+  resolveRelativeImageSrcs();
   applyNoteStyles();
   addTableMaximizeButtons();
   initImageZoom();
@@ -3724,6 +3740,9 @@ async function renderMarkdownFull(content, generation) {
 
   // Patch only changed DOM nodes — preserves scroll, avoids full relayout
   patchViewerDOM(html);
+
+  // Resolve relative image paths now that the DOM is in place
+  resolveRelativeImageSrcs();
 
   // Apply note styles immediately after DOM insertion (before async callbacks)
   applyNoteStyles();
