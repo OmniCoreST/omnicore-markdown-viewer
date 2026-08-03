@@ -3343,6 +3343,33 @@ function _getBlockHash(el) {
   return null;
 }
 
+// Resolve relative image paths against the open file's folder. The window is loaded
+// from the app's own index.html, so without this, relative srcs resolve against the
+// app directory and never load. Images are inlined as data URIs (same mechanism as
+// the insert-image feature) — runs on the DOM after sanitization, and unlike file://
+// URLs is not subject to DOMPurify's URI allowlist or file: subresource policies.
+const IMG_MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
+  '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif'
+};
+
+function resolveRelativeImageSrcs() {
+  if (!currentFilePath) return;
+  const dir = path.dirname(currentFilePath);
+  viewer.querySelectorAll('img').forEach(img => {
+    const src = img.getAttribute('src') || '';
+    if (!src || /^(data:|https?:|file:|blob:)/i.test(src)) return;
+    try {
+      const abs = path.resolve(dir, decodeURIComponent(src));
+      const mime = IMG_MIME_BY_EXT[path.extname(abs).toLowerCase()];
+      if (mime && fs.existsSync(abs)) {
+        img.src = `data:${mime};base64,${fs.readFileSync(abs).toString('base64')}`;
+      }
+    } catch (e) { /* leave src as-is */ }
+  });
+}
+
 // Patch viewer's top-level children in-place — only replace nodes that actually changed.
 // Unchanged nodes (same hash) are left untouched, preserving scroll position and event listeners.
 function patchViewerDOM(newHtml) {
@@ -3479,6 +3506,7 @@ function renderLightFormat(content, generation) {
   if (generation !== renderGeneration) return;
 
   patchViewerDOM(html);
+  resolveRelativeImageSrcs();
   applyNoteStyles();
   addTableMaximizeButtons();
   initImageZoom();
@@ -3724,6 +3752,9 @@ async function renderMarkdownFull(content, generation) {
 
   // Patch only changed DOM nodes — preserves scroll, avoids full relayout
   patchViewerDOM(html);
+
+  // Resolve relative image paths now that the DOM is in place
+  resolveRelativeImageSrcs();
 
   // Apply note styles immediately after DOM insertion (before async callbacks)
   applyNoteStyles();
