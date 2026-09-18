@@ -1,6 +1,6 @@
 {
   "name": "omnicore-markdown-viewer",
-  "version": "2.2.5",
+  "version": "2.3.0",
   "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
   "main": "main.js",
   "scripts": {
@@ -89,6 +89,7 @@
       "file-helpers.js",
       "emoji-map.js",
       "emoji-parser.js",
+      "markdown-shared.js",
       "node_modules/**/*",
       "!**/*.md",
       "!dist/**/*",
@@ -146,12 +147,17 @@
           "role": "Viewer"
         }
       ],
-      "artifactName": "Omnicore.Markdown.Viewer.${version}.${ext}"
+      "artifactName": "Omnicore-Markdown-Viewer-${version}-portable.${ext}"
+    },
+    "portable": {
+      "artifactName": "Omnicore-Markdown-Viewer-${version}-portable.${ext}"
     },
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
+      "artifactName": "Omnicore-Markdown-Viewer-${version}-${arch}-mac.${ext}",
       "icon": "omnicore_ico.png",
       "fileAssociations": [
         {
@@ -179,6 +185,12 @@
           "role": "Viewer"
         }
       ]
+    },
+    "dmg": {
+      "artifactName": "Omnicore-Markdown-Viewer-${version}-${arch}.${ext}"
+    },
+    "appImage": {
+      "artifactName": "Omnicore-Markdown-Viewer-${version}.${ext}"
     },
     "linux": {
       "target": [
@@ -226,7 +238,7 @@
       }
     ],
     "nsis": {
-      "artifactName": "Omnicore.Markdown.Viewer.Setup.${version}.${ext}",
+      "artifactName": "Omnicore-Markdown-Viewer-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "allowElevation": true,

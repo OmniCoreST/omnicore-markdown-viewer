@@ -12,7 +12,7 @@ This guide helps you test the Windows installer to ensure everything works corre
 ### Installation Test
 
 1. **Run the Installer**
-   - Double-click `Omnicore.Markdown.Viewer.Setup.2.0.4.exe`
+   - Double-click `Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe`
    - UAC prompt should appear (requires admin rights)
 
 2. **License Agreement**
@@ -84,7 +84,7 @@ Test each file type:
 #### Programs and Features
 - [ ] Open "Add/Remove Programs" (Windows Settings > Apps)
 - [ ] "Omnicore Markdown Viewer" appears in list
-- [ ] Version number is correct (2.0.4)
+- [ ] Version number is correct (X.Y.Z)
 - [ ] Publisher shows as "Omnicore"
 - [ ] Install location shows correct path
 
@@ -170,7 +170,7 @@ For automated testing, use silent installation:
 
 ```batch
 REM Install silently
-Omnicore.Markdown.Viewer.Setup.2.0.4.exe /S
+Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe /S
 
 REM Wait for installation
 timeout /t 10
@@ -207,7 +207,7 @@ INSTALLER TEST REPORT
 Date: _____________
 Tester: _____________
 Windows Version: _____________
-Build Version: 2.0.4
+Build Version: X.Y.Z
 
 Installation: PASS / FAIL
 Desktop Shortcut: PASS / FAIL
@@ -233,7 +233,7 @@ Approved for Release: YES / NO
 
 After successful testing:
 1. Update changelog with tested features
-2. Tag release in Git: `git tag v2.0.4`
+2. Tag release in Git: `git tag vX.Y.Z`
 3. Create GitHub release with installer attached
 4. Update documentation with any findings
 5. Announce release to users

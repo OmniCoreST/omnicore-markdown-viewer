@@ -32,7 +32,7 @@ npm run build
 After the build completes, look in the `dist/` folder:
 ```
 dist/
-└── Omnicore Markdown Viewer 1.0.0.exe
+└── Omnicore-Markdown-Viewer-X.Y.Z-portable.exe
 ```
 
 This is your **standalone executable**!
@@ -43,7 +43,7 @@ This is your **standalone executable**!
 ```bash
 npm run build-installer
 ```
-Creates: `dist/Omnicore Markdown Viewer Setup 1.0.0.exe`
+Creates: `dist/Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe`
 
 ### Build Everything
 ```bash

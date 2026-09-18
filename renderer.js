@@ -14,7 +14,9 @@ const { getTscircuitConfig } = require('./tscircuit-config');
 const OmniWare = require('./omniwire/omniware');
 const { getOmniWareDarkCSS } = require('./omniware-config');
 const { positionContextMenu, hideContextMenu: hideContextMenuHelper } = require('./context-menu-utils');
-const { parseEmojis } = require('./emoji-parser');
+const emojiMap = require('./emoji-map');
+const OmdShared = require('./markdown-shared');
+const { pathToFileURL, fileURLToPath } = require('url');
 
 // Libraries loaded from CDN in index.html
 // marked, mermaid, and DOMPurify are available globally
@@ -39,6 +41,29 @@ marked.setOptions({
   mangle: false,
   sanitize: false
 });
+
+// Diagram fences are recognised by marked itself (so a ```mermaid inside another
+// code block stays code). While a render is collecting (`diagramSink` set), each
+// diagram fence becomes an empty placeholder element; the real diagram element is
+// put back via the DOM after DOMPurify (see restoreDiagramPlaceholders).
+let diagramSink = null;
+marked.use({
+  renderer: {
+    code(code, infostring) {
+      const kind = OmdShared.diagramLang(infostring);
+      if (!kind || !diagramSink) return false; // ordinary code block → default renderer
+      const idx = diagramSink.items.length;
+      diagramSink.items.push({ kind, code: normalizeDiagramCode(kind, code) });
+      return `<div class="omd-diagram" data-omd-ph="${diagramSink.nonce}-${idx}"></div>\n`;
+    }
+  }
+});
+
+// OmniWare is indentation-sensitive: keep the first line's indent, drop blank edges.
+function normalizeDiagramCode(kind, code) {
+  const text = String(code || '');
+  return kind === 'omniware' ? text.replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '') : text.trim();
+}
 
 // ============================================
 // CONFIGURATION CONSTANTS
@@ -164,6 +189,10 @@ const UI_STRINGS = {
     'confirm.unsavedExit': 'You have unsaved changes. Exit edit mode anyway?',
     'confirm.unsavedOpenFile': 'You have unsaved changes. Discard changes and open "${name}"?',
     'confirm.clearRecent': 'Are you sure you want to clear all recent files?',
+    'unsaved.message': 'Do you want to save the changes you made to "${name}"?',
+    'unsaved.detail': 'Your changes will be lost if you don\'t save them.',
+    'unsaved.discard': 'Don\'t Save',
+    'title.unsaved': 'Unsaved changes — press Ctrl+S to save',
     'alert.openFirst': 'Please open a markdown file first before exporting to PDF.',
     'alert.openFirstWord': 'Please open a markdown file first before exporting to Word.',
     'alert.noFileOpen': 'No file is currently open.',
@@ -291,6 +320,10 @@ const UI_STRINGS = {
     'confirm.unsavedExit': 'Kaydedilmemiş değişiklikler var. Düzenleme modundan çıkılsın mı?',
     'confirm.unsavedOpenFile': 'Kaydedilmemiş değişiklikler var. Değişiklikleri silip "${name}" açılsın mı?',
     'confirm.clearRecent': 'Tüm son dosyalar temizlensin mi?',
+    'unsaved.message': '"${name}" dosyasındaki değişiklikler kaydedilsin mi?',
+    'unsaved.detail': 'Kaydetmezseniz değişiklikleriniz kaybolur.',
+    'unsaved.discard': 'Kaydetme',
+    'title.unsaved': 'Kaydedilmemiş değişiklikler — kaydetmek için Ctrl+S',
     'alert.openFirst': 'Lütfen PDF\'e aktarmadan önce bir markdown dosyası açın.',
     'alert.openFirstWord': 'Lütfen Word\'e aktarmadan önce bir markdown dosyası açın.',
     'alert.noFileOpen': 'Şu anda açık dosya yok.',
@@ -414,6 +447,7 @@ const markdownEditor = document.getElementById('markdownEditor');
 const saveButton = document.getElementById('saveButton');
 const exitEditBtn = document.getElementById('exitEditBtn');
 const unsavedIndicator = document.getElementById('unsavedIndicator');
+const viewUnsavedIndicator = document.getElementById('viewUnsavedIndicator');
 const contentWrapper = document.querySelector('.content-wrapper');
 const editorSplitter = document.getElementById('editorSplitter');
 const loadingScreen = document.getElementById('loadingScreen');
@@ -447,8 +481,7 @@ function historyUndo() {
   undoRedoRendering = true;
   if (isEditMode) {
     markdownEditor.value = prevContent;
-    hasUnsavedChanges = (prevContent !== originalMarkdown);
-    updateUnsavedIndicator();
+    setUnsavedChanges(prevContent !== lastSavedContent);
     clearTimeout(previewDebounceTimer);
     renderMarkdown(prevContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
@@ -456,6 +489,7 @@ function historyUndo() {
     });
   } else {
     originalMarkdown = prevContent;
+    setUnsavedChanges(originalMarkdown !== lastSavedContent);
     invalidateTranslationCache();
     renderMarkdown(prevContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
@@ -474,8 +508,7 @@ function historyRedo() {
   undoRedoRendering = true;
   if (isEditMode) {
     markdownEditor.value = nextContent;
-    hasUnsavedChanges = (nextContent !== originalMarkdown);
-    updateUnsavedIndicator();
+    setUnsavedChanges(nextContent !== lastSavedContent);
     clearTimeout(previewDebounceTimer);
     renderMarkdown(nextContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
@@ -483,6 +516,7 @@ function historyRedo() {
     });
   } else {
     originalMarkdown = nextContent;
+    setUnsavedChanges(originalMarkdown !== lastSavedContent);
     invalidateTranslationCache();
     renderMarkdown(nextContent).then(() => {
       contentWrapper.scrollTop = scrollPos;
@@ -524,9 +558,11 @@ let fileUpdateDismissTimeout = null;
 
 // Editor state
 let isEditMode = false;
-let hasUnsavedChanges = false;
+let hasUnsavedChanges = false;   // in-memory source differs from the file on disk (view or edit mode)
+let lastSavedContent = null;     // source as last read from / written to disk
 let originalMarkdown = '';
 let previewDebounceTimer = null;
+let pendingLinkAnchor = null;    // { path, fragment } to scroll to once a linked file has rendered
 
 // Navigation history (for back/forward)
 let navigationHistory = [];
@@ -615,8 +651,9 @@ function addToNavigationHistory(filePath, scrollPosition = 0) {
   updateNavButtons();
 }
 
-function navigateBack() {
+async function navigateBack() {
   if (navigationIndex <= 0) return;
+  if (!(await confirmUnsavedChanges())) return;
 
   // Save current scroll position
   if (navigationHistory[navigationIndex]) {
@@ -633,8 +670,9 @@ function navigateBack() {
   updateNavButtons();
 }
 
-function navigateForward() {
+async function navigateForward() {
   if (navigationIndex >= navigationHistory.length - 1) return;
+  if (!(await confirmUnsavedChanges())) return;
 
   // Save current scroll position
   if (navigationHistory[navigationIndex]) {
@@ -1004,7 +1042,7 @@ function commitViewModeEdit(newContent, scrollPosition, syncFn) {
       contentWrapper.scrollTop = scrollPosition;
     });
   }
-  hasUnsavedChanges = true;
+  setUnsavedChanges(true);
 }
 
 // Update markdown source without triggering a full re-render (used when DOM is already patched).
@@ -1022,7 +1060,7 @@ function replaceSourceSilently(newContent, syncFn) {
     invalidateTranslationCache();
     if (syncFn) syncFn();
   }
-  hasUnsavedChanges = true;
+  setUnsavedChanges(true);
   updateUnsavedIndicator();
 }
 
@@ -1252,9 +1290,7 @@ async function renderD2Diagrams(root) {
 
   // Render each diagram sequentially via the shared queue
   for (const el of elements) {
-    const src = el.dataset.d2Src
-      ? el.dataset.d2Src.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-      : '';
+    const src = el.dataset.d2Src || '';
     if (!src) continue;
 
     const cacheKey = `${isDarkMode ? 'd' : 'l'}::${src}`;
@@ -1354,9 +1390,7 @@ async function renderTscircuitDiagrams(root) {
   // Render sequentially — runTscircuitCode shares the eval worker across calls
   // and concurrent compiles within the same worker can deadlock.
   for (const el of elements) {
-    const src = el.dataset.tscircuitSrc
-      ? el.dataset.tscircuitSrc.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-      : '';
+    const src = el.dataset.tscircuitSrc || '';
     if (!src) continue;
 
     const cacheKey = `${isDarkMode ? 'd' : 'l'}::${src}`;
@@ -1531,122 +1565,137 @@ logoLink.addEventListener('click', (e) => {
   shell.openExternal('https://www.omnicore.com.tr');
 });
 
-// Handle links in rendered markdown
+// ============================================
+// LINKS
+// ============================================
+
+const VIEWABLE_EXTENSIONS = ['.md', '.markdown', '.mdown', '.mkd', '.mkdn', '.mmd', '.mermaid', '.ow'];
+
+function isViewableFile(filePath) {
+  const lower = String(filePath).toLowerCase();
+  return VIEWABLE_EXTENSIONS.includes(path.extname(lower)) || lower.endsWith('.circuit.tsx');
+}
+
+// href of an <a>, including SVG links (Mermaid `click … href`, D2 `link:`) whose
+// `href` property is an SVGAnimatedString rather than a string.
+function getLinkHref(link) {
+  let href = link.getAttribute('href');
+  if (href === null) href = link.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+  if (href === null && link.href && typeof link.href === 'object' && 'baseVal' in link.href) href = link.href.baseVal;
+  return href;
+}
+
+// Expand every collapsed section that contains `el`.
+function expandCollapsedAncestors(el) {
+  for (let node = el && el.parentElement; node && node !== viewer; node = node.parentElement) {
+    if (node.classList.contains('collapsible-section') && node.classList.contains('collapsed')) {
+      node.classList.remove('collapsed');
+      const headerId = node.dataset.forHeader;
+      const header = headerId ? viewerElementById(headerId) : node.previousElementSibling;
+      if (header) header.classList.remove('collapsed');
+      if (headerId) collapsedHeaders.set(headerId, false);
+    }
+  }
+}
+
+// Element with the given id inside the viewer only (app UI ids never match).
+function viewerElementById(id) {
+  if (!id) return null;
+  return viewer.querySelector('[id="' + CSS.escape(id) + '"]');
+}
+
+// Scroll to an in-document fragment ("#x" or "x"). Only elements inside the viewer are considered.
+function scrollToFragment(fragment, behavior = 'smooth') {
+  const target = OmdShared.findAnchorTarget(viewer, fragment);
+  if (!target) {
+    let name = String(fragment).replace(/^#/, '');
+    try { name = decodeURIComponent(name); } catch (e) { /* keep as written */ }
+    showNotification(i18n('notif.sectionNotFound') + name, 3000);
+    return false;
+  }
+  expandCollapsedAncestors(target);
+  // scrollIntoView correctly handles CSS `zoom` on the viewer.
+  // 20px top padding comes from .content-wrapper's scroll-padding-top.
+  target.scrollIntoView({ behavior, block: 'start' });
+  return true;
+}
+
+// Open a local file a link points to: viewable types in the app (then scroll to the
+// fragment), anything else with the OS default application.
+async function openLinkedFile(linkPath, fragment) {
+  let targetPath = linkPath;
+  if (/^\/[A-Za-z]:[\\/]/.test(targetPath)) targetPath = targetPath.slice(1); // /C:/x → C:/x
+  if (!targetPath) {
+    if (fragment) scrollToFragment(fragment);
+    return;
+  }
+  if (!path.isAbsolute(targetPath)) {
+    if (!currentFilePath) return;
+    targetPath = path.resolve(path.dirname(currentFilePath), targetPath);
+  }
+  if (!fs.existsSync(targetPath)) {
+    showNotification(i18n('notif.fileNotFound') + path.basename(targetPath), 4000);
+    return;
+  }
+  if (currentFilePath && path.resolve(targetPath) === path.resolve(currentFilePath)) {
+    if (fragment) scrollToFragment(fragment);
+    return;
+  }
+  let isFile = false;
+  try { isFile = fs.statSync(targetPath).isFile(); } catch (e) { /* treat as non-file */ }
+  if (isFile && isViewableFile(targetPath)) {
+    if (!(await confirmUnsavedChanges())) return;
+    pendingLinkAnchor = fragment ? { path: targetPath, fragment } : null;
+    ipcRenderer.send('open-file-path', targetPath);
+  } else {
+    shell.openPath(targetPath);
+  }
+}
+
+// Handle links in rendered markdown. The app window itself never navigates:
+// anchors scroll inside the viewer, web/mail links go to the OS, files open here.
 viewer.addEventListener('click', (e) => {
-  // Find the closest anchor tag (in case click was on child element)
-  const link = e.target.closest('a');
-  if (link && link.href) {
-    const url = link.href;
+  const link = e.target && e.target.closest ? e.target.closest('a') : null;
+  if (!link || !viewer.contains(link)) return;
+  const href = getLinkHref(link);
+  if (href === null || href.trim() === '') return; // <a id="…"> anchors etc.
+  e.preventDefault();
 
-    // Get the href attribute directly to handle relative paths and anchors
-    const hrefAttr = link.getAttribute('href');
-
-    // Check if it's an internal anchor link (starts with #)
-    if (hrefAttr && hrefAttr.startsWith('#')) {
-      e.preventDefault();
-      const targetId = hrefAttr.substring(1); // Remove the # symbol
-
-      // Try to find the target element by ID
-      let targetElement = document.getElementById(targetId);
-
-      // If not found by ID, try to find by searching all headers
-      if (!targetElement) {
-        const headers = viewer.querySelectorAll('h1, h2, h3, h4, h5, h6');
-
-        for (const header of headers) {
-          // Check if the header's ID matches (case-insensitive)
-          if (header.id && header.id.toLowerCase() === targetId.toLowerCase()) {
-            targetElement = header;
-            break;
-          }
-          // Also check if the generated ID from text matches
-          const headerText = header.textContent.trim().toLowerCase()
-            .replace(/[^\w\s-]/g, '') // Remove punctuation
-            .replace(/\s+/g, '-') // Replace spaces with hyphens
-            .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
-          if (headerText === targetId.toLowerCase()) {
-            targetElement = header;
-            break;
-          }
-        }
-      }
-
-      if (targetElement) {
-        // scrollIntoView correctly handles CSS `zoom` on the viewer.
-        // 20px top padding comes from .content-wrapper's scroll-padding-top.
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else {
-        showNotification(i18n('notif.sectionNotFound') + targetId, 3000);
-      }
-      return;
-    }
-
-    // Check if it's an external web link (http or https)
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      e.preventDefault();
-      shell.openExternal(url);
-      return;
-    }
-
-    // Check if it's a local file link (file:// or relative path)
-    if (hrefAttr && !hrefAttr.startsWith('#') && !hrefAttr.startsWith('http')) {
-      e.preventDefault();
-
-      // Resolve the path relative to current file
-      let targetPath = hrefAttr;
-
-      // Handle file:// protocol
-      if (targetPath.startsWith('file://')) {
-        targetPath = targetPath.replace('file://', '');
-        // Handle Windows paths like file:///C:/...
-        if (targetPath.startsWith('/') && targetPath[2] === ':') {
-          targetPath = targetPath.substring(1);
-        }
-      }
-
-      // If it's a relative path, resolve it against current file's directory
-      if (currentFilePath && !path.isAbsolute(targetPath)) {
-        const currentDir = path.dirname(currentFilePath);
-        targetPath = path.resolve(currentDir, targetPath);
-      }
-
-      // Check if the file exists
-      if (fs.existsSync(targetPath)) {
-        // Check if it's a markdown or mermaid file
-        const ext = path.extname(targetPath).toLowerCase();
-        if (['.md', '.markdown', '.mmd', '.mermaid', '.ow'].includes(ext)) {
-          // Open the markdown file in this app
-          ipcRenderer.send('open-file-path', targetPath);
-        } else {
-          // Open other files with system default app
-          shell.openPath(targetPath);
-        }
-      } else {
-        showNotification(i18n('notif.fileNotFound') + path.basename(targetPath), 4000);
-      }
-    }
+  const target = OmdShared.parseLinkTarget(href);
+  switch (target.kind) {
+    case 'anchor':
+      scrollToFragment(href);
+      break;
+    case 'external':
+      shell.openExternal(target.url);
+      break;
+    case 'file':
+      openLinkedFile(target.path, target.fragment);
+      break;
+    default:
+      console.warn('Ignoring link with unsupported scheme:', href);
   }
 });
 
+// Show the Open dialog — after the unsaved-changes check (toolbar, welcome screen, Ctrl+O)
+async function requestOpenFileDialog() {
+  if (!(await confirmUnsavedChanges())) return;
+  ipcRenderer.send('open-file-dialog');
+}
+
+// Ctrl+O is caught in main.js (before-input-event) and routed here
+ipcRenderer.on('shortcut-open-file', () => requestOpenFileDialog());
+
 // Open file button (toolbar)
 openFileBtn.addEventListener('click', () => {
-  // Check for unsaved changes before opening file dialog
-  if (isEditMode && hasUnsavedChanges) {
-    if (!confirm(i18n('confirm.unsavedOpen'))) {
-      return; // User canceled, don't open file dialog
-    }
-  }
-
   fileMenu.classList.remove('visible');
-  ipcRenderer.send('open-file-dialog');
+  requestOpenFileDialog();
 });
 
 // Welcome screen "Open File" button
 const welcomeOpenBtn = document.getElementById('welcomeOpenBtn');
 if (welcomeOpenBtn) {
-  welcomeOpenBtn.addEventListener('click', () => {
-    ipcRenderer.send('open-file-dialog');
-  });
+  welcomeOpenBtn.addEventListener('click', () => requestOpenFileDialog());
 }
 
 // Welcome screen "Read README.md" button
@@ -1655,6 +1704,7 @@ if (welcomeReadmeBtn) {
   welcomeReadmeBtn.addEventListener('click', async () => {
     try {
       const readmePath = await ipcRenderer.invoke('get-readme-path');
+      if (!(await confirmUnsavedChanges())) return;
       ipcRenderer.send('open-file-path', readmePath);
     } catch (e) {
       showNotification('README.md not found', 2000);
@@ -1693,7 +1743,7 @@ if (welcomeReadmeBtn) {
     if (dragCounter === 0) document.body.classList.remove('drop-active');
   });
 
-  window.addEventListener('drop', (e) => {
+  window.addEventListener('drop', async (e) => {
     if (!isFileDrag(e)) return;
     e.preventDefault();
     dragCounter = 0;
@@ -1713,27 +1763,13 @@ if (welcomeReadmeBtn) {
     }
     if (!filePath) return;
 
-    if (isEditMode && hasUnsavedChanges) {
-      if (!confirm(i18n('confirm.unsavedOpenFile', { name: file.name }))) return;
-    }
+    if (!(await confirmUnsavedChanges())) return;
     ipcRenderer.send('open-file-path', filePath);
   });
 })();
 
-// Refresh button
+// Refresh button (reloadCurrentFile asks about unsaved changes)
 refreshBtn.addEventListener('click', () => {
-  if (!currentFilePath) {
-    return;
-  }
-
-  // Check for unsaved changes before refreshing
-  if (isEditMode && hasUnsavedChanges) {
-    if (!confirm(i18n('confirm.unsavedRefresh'))) {
-      return;
-    }
-  }
-
-  // Reload the file from disk
   reloadCurrentFile();
 });
 
@@ -1867,6 +1903,32 @@ async function mermaidToBase64Png(mermaidElement) {
   });
 }
 
+const IMAGE_MIME_TYPES = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.avif': 'image/avif'
+};
+
+// Filesystem path of a rendered local image (its src is a file:// URL after rendering)
+function localImagePath(src) {
+  if (!src || !/^file:/i.test(src)) return null;
+  try { return fileURLToPath(src); } catch (e) { return null; }
+}
+
+// html-to-docx cannot read file:// images — embed them as data URIs
+function inlineLocalImagesAsDataUris(root) {
+  root.querySelectorAll('img').forEach(img => {
+    const filePath = localImagePath(img.getAttribute('src'));
+    if (!filePath) return;
+    const mime = IMAGE_MIME_TYPES[path.extname(filePath).toLowerCase()];
+    if (!mime) return;
+    try {
+      img.setAttribute('src', `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`);
+    } catch (e) {
+      console.warn('Word export: could not inline image', filePath, e.message);
+    }
+  });
+}
+
 // Export to Word button
 exportWordBtn.addEventListener('click', async () => {
   fileMenu.classList.remove('visible');
@@ -1968,6 +2030,16 @@ exportWordBtn.addEventListener('click', async () => {
       }
     });
 
+    // The image zoom wrapper (a <div> inside <p>) hides images from html-to-docx
+    viewerClone.querySelectorAll('.img-zoom-container').forEach(container => {
+      const img = container.querySelector('img');
+      if (img) container.replaceWith(img); else container.remove();
+    });
+    viewerClone.querySelectorAll('.img-zoom-btn').forEach(el => el.remove());
+
+    // Local images (file:// URLs in the viewer) are embedded so Word can show them
+    inlineLocalImagesAsDataUris(viewerClone);
+
     const htmlContent = viewerClone.innerHTML;
     console.log('Sending export-word IPC, HTML length:', htmlContent.length);
 
@@ -2006,7 +2078,8 @@ exportHtmlBtn.addEventListener('click', async () => {
     viewerClone.querySelectorAll('.welcome').forEach(el => el.remove());
 
     // Collect image src values so the main process can copy local files into the assets folder.
-    // Data-URI images are kept inline; only file:// and absolute paths are extracted for copying.
+    // Data-URI images are kept inline. Local images are file:// URLs in the viewer; they are
+    // sent as filesystem paths so the main process can copy them.
     const images = [];
     viewerClone.querySelectorAll('img').forEach((img, idx) => {
       const src = img.getAttribute('src') || '';
@@ -2015,7 +2088,8 @@ exportHtmlBtn.addEventListener('click', async () => {
       // Mark img with a placeholder; main process will rewrite it after copying the file
       const token = `__OMNICORE_IMG_${idx}__`;
       img.setAttribute('src', token);
-      images.push({ token, originalSrc: src });
+      img.removeAttribute('data-omd-src');
+      images.push({ token, originalSrc: localImagePath(src) || src });
     });
 
     const bodyHtml = viewerClone.innerHTML;
@@ -2115,10 +2189,13 @@ function stopRefreshBlink() {
   }
 }
 
-function reloadCurrentFile() {
+// Reload from disk (Refresh button, Ctrl+R, "File Updated" toast) — asks first
+// when there are unsaved changes.
+async function reloadCurrentFile() {
   if (!currentFilePath) {
     return;
   }
+  if (!(await confirmUnsavedChanges())) return;
 
   dismissFileUpdateNotification();
   ipcRenderer.send('reload-file', { filePath: currentFilePath });
@@ -2126,13 +2203,23 @@ function reloadCurrentFile() {
 
 // Before printToPDF: main signals renderer to drop dark mode for a clean light export
 // Letterhead is handled by main.js via printToPDF headerTemplate/footerTemplate (every page)
+let titleBeforePdfExport = null;
 ipcRenderer.on('prepare-for-pdf-export', () => {
   document.body.classList.remove('dark-mode');
+  // Page title = file name while printing (main.js also writes it as the PDF /Title)
+  if (currentFilePath) {
+    if (titleBeforePdfExport === null) titleBeforePdfExport = document.title;
+    document.title = path.basename(currentFilePath).replace(/\.[^.]+$/, '');
+  }
   // Double rAF ensures the style change is painted before main calls printToPDF
   requestAnimationFrame(() => requestAnimationFrame(() => ipcRenderer.send('pdf-export-ready')));
 });
 
 ipcRenderer.on('pdf-export-result', (event, data) => {
+  if (titleBeforePdfExport !== null) {
+    document.title = titleBeforePdfExport;
+    titleBeforePdfExport = null;
+  }
   // Restore dark mode if it was active before the export
   if (localStorage.getItem('darkMode') === 'enabled') {
     document.body.classList.add('dark-mode');
@@ -2162,7 +2249,9 @@ ipcRenderer.on('word-export-result', (event, data) => {
 // Toggle edit mode
 toggleEditBtn.addEventListener('click', async () => {
   fileMenu.classList.remove('visible');
-  if (isEditMode && hasUnsavedChanges) {
+  // Leaving edit mode discards edits made in the editor since it was opened (after confirming)
+  const editorChanged = isEditMode && markdownEditor.value !== originalMarkdown;
+  if (editorChanged) {
     if (!confirm(i18n('confirm.unsavedExit'))) {
       return;
     }
@@ -2181,8 +2270,7 @@ toggleEditBtn.addEventListener('click', async () => {
     // Enter edit mode
     contentWrapper.classList.add('split-view');
     markdownEditor.value = originalMarkdown;
-    hasUnsavedChanges = false;
-    updateUnsavedIndicator();
+    setUnsavedChanges(originalMarkdown !== lastSavedContent);
     toggleEditBtn.style.background = 'var(--primary-color)';
     toggleEditBtn.style.color = '#ffffff';
   } else {
@@ -2191,6 +2279,9 @@ toggleEditBtn.addEventListener('click', async () => {
     toggleEditBtn.style.background = '';
     toggleEditBtn.style.color = '';
     clearTimeout(previewDebounceTimer);
+    setUnsavedChanges(originalMarkdown !== lastSavedContent);
+    // The preview may still show the discarded editor text
+    if (editorChanged) renderMarkdown(getActiveMarkdown());
 
     // Resume file tracking when exiting edit mode (if it was paused)
     if (!isFileTrackingActive && currentFilePath) {
@@ -2289,8 +2380,7 @@ markdownEditor.addEventListener('input', () => {
   if (!isEditMode) return;
 
   const previousUnsavedState = hasUnsavedChanges;
-  hasUnsavedChanges = (markdownEditor.value !== originalMarkdown);
-  updateUnsavedIndicator();
+  setUnsavedChanges(markdownEditor.value !== lastSavedContent);
 
   // Pause file tracking when unsaved changes appear
   if (!previousUnsavedState && hasUnsavedChanges) {
@@ -2318,30 +2408,15 @@ function syncEditorWithStore() {
   }
 }
 
-// If cursor is inside a fenced code block, return the position just after the closing ```
-// Returns the original insertPos if cursor is not inside a code block
+// If insertPos is inside a code block (fenced or indented, as marked sees it), return the
+// position just after that block (and its line break); otherwise return insertPos.
 function skipPastCodeBlock(content, insertPos) {
-  // Look backwards from insertPos to see if we're inside ``` ... ```
-  const before = content.substring(0, insertPos);
-  const fenceOpenRegex = /```[\w]*\n/g;
-  let lastFenceOpen = -1;
-  let m;
-  while ((m = fenceOpenRegex.exec(before)) !== null) {
-    lastFenceOpen = m.index + m[0].length;
-  }
-  if (lastFenceOpen === -1) return insertPos; // not inside any fence
-
-  // Count ``` closings between lastFenceOpen and insertPos
-  const between = before.substring(lastFenceOpen);
-  const closeCount = (between.match(/```/g) || []).length;
-  if (closeCount % 2 === 0) {
-    // Even number of closes → we're inside an open block
-    // Find the closing ``` after insertPos
-    const closeIdx = content.indexOf('```', insertPos);
-    if (closeIdx !== -1) {
-      // Position after the closing ``` and its newline
-      const afterClose = closeIdx + 3;
-      return content[afterClose] === '\n' ? afterClose + 1 : afterClose;
+  for (const block of getSourceCodeBlocks(content)) {
+    if (insertPos > block.start && insertPos < block.end) {
+      let pos = block.end;
+      if (content[pos] === '\r') pos++;
+      if (content[pos] === '\n') pos++;
+      return pos;
     }
   }
   return insertPos;
@@ -2349,22 +2424,56 @@ function skipPastCodeBlock(content, insertPos) {
 
 // Save file. In edit mode the textarea is the source of truth; in view mode it
 // may be stale (view-mode edits update `originalMarkdown` directly), so save
-// `originalMarkdown` instead.
+// `originalMarkdown` instead. Resolves to true when the file was written.
+let pendingSaves = [];
 function saveMarkdownFile() {
   if (!currentFilePath) {
     alert(i18n('alert.noFileOpen'));
-    return;
+    return Promise.resolve(false);
   }
 
   const content = isEditMode ? markdownEditor.value : originalMarkdown;
-  ipcRenderer.send('save-markdown-file', {
-    filePath: currentFilePath,
-    content: content
+  return new Promise(resolve => {
+    pendingSaves.push({ content, resolve });
+    ipcRenderer.send('save-markdown-file', {
+      filePath: currentFilePath,
+      content: content
+    });
   });
 }
 
 // Save button click
-saveButton.addEventListener('click', saveMarkdownFile);
+saveButton.addEventListener('click', () => saveMarkdownFile());
+
+// Ask what to do with unsaved changes before they would be lost (open another
+// file, reload, quit). Resolves to true when it is fine to continue.
+let unsavedPromptOpen = null;
+function confirmUnsavedChanges() {
+  if (!hasUnsavedChanges) return Promise.resolve(true);
+  if (unsavedPromptOpen) return unsavedPromptOpen; // one dialog at a time
+  unsavedPromptOpen = (async () => {
+    const name = currentFilePath ? path.basename(currentFilePath) : '';
+    let choice;
+    try {
+      choice = await ipcRenderer.invoke('confirm-unsaved-changes', {
+        message: i18n('unsaved.message', { name }),
+        detail: i18n('unsaved.detail'),
+        buttons: [i18n('save'), i18n('unsaved.discard'), i18n('cancel')]
+      });
+    } catch (e) {
+      choice = confirm(i18n('confirm.unsavedOpen')) ? 'discard' : 'cancel';
+    }
+    if (choice === 'save') return saveMarkdownFile();
+    return choice === 'discard';
+  })();
+  return unsavedPromptOpen.finally(() => { unsavedPromptOpen = null; });
+}
+
+// Window close / Ctrl+Q: main.js asks before closing while there are unsaved changes
+ipcRenderer.on('close-requested', async () => {
+  const proceed = await confirmUnsavedChanges();
+  ipcRenderer.send('close-request-result', proceed);
+});
 
 // Ctrl+Z (Undo) and Ctrl+Y (Redo) shortcuts
 document.addEventListener('keydown', (e) => {
@@ -2380,11 +2489,11 @@ document.addEventListener('keydown', (e) => {
 // Note: Ctrl+Shift+O is intercepted by main.js (before-input-event) and forwarded
 // as 'toggle-corporate-mode' IPC — handled above at ipcRenderer.on('toggle-corporate-mode')
 
-// Ctrl+S keyboard shortcut
+// Ctrl+S keyboard shortcut — edit mode and view mode (right-click edits)
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's' && isEditMode) {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
-    saveMarkdownFile();
+    if (currentFilePath) saveMarkdownFile();
   }
 });
 
@@ -2392,21 +2501,69 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
     e.preventDefault();
-    if (currentFilePath) {
-      // Check for unsaved changes
-      if (isEditMode && hasUnsavedChanges) {
-        if (confirm(i18n('confirm.unsavedRefresh'))) {
-          reloadCurrentFile();
-        }
-      } else {
-        reloadCurrentFile();
-      }
-    }
+    reloadCurrentFile();
   }
+});
+
+// Ctrl+D toggles dark mode
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'd' || e.key === 'D')) {
+    e.preventDefault();
+    darkModeToggle.click();
+  }
+});
+
+// Ctrl+B / Ctrl+I / Ctrl+` in the editor: toggle **bold**, *italic*, `code` on the selection
+function toggleEditorWrap(marker) {
+  const value = markdownEditor.value;
+  const start = markdownEditor.selectionStart;
+  const end = markdownEditor.selectionEnd;
+  const m = marker.length;
+  const selected = value.substring(start, end);
+  // For '*', a '**' run belongs to bold, not italic
+  const isSingleStar = (text, i) => marker !== '*' || (text[i - 1] !== '*' && text[i + 1] !== '*');
+  let next;
+  let selStart;
+  let selEnd;
+  if (selected.length > 2 * m && selected.startsWith(marker) && selected.endsWith(marker) &&
+      (marker !== '*' || (selected[1] !== '*' && selected[selected.length - 2] !== '*'))) {
+    // Selection includes the markers → remove them
+    const inner = selected.slice(m, -m);
+    next = value.substring(0, start) + inner + value.substring(end);
+    selStart = start;
+    selEnd = start + inner.length;
+  } else if (start >= m && value.substring(start - m, start) === marker && value.substring(end, end + m) === marker &&
+      isSingleStar(value, start - 1) && isSingleStar(value, end)) {
+    // Markers right outside the selection → remove them
+    next = value.substring(0, start - m) + selected + value.substring(end + m);
+    selStart = start - m;
+    selEnd = end - m;
+  } else {
+    next = value.substring(0, start) + marker + selected + marker + value.substring(end);
+    selStart = start + m;
+    selEnd = end + m;
+  }
+  historyPush(value);
+  markdownEditor.value = next;
+  markdownEditor.selectionStart = selStart;
+  markdownEditor.selectionEnd = selEnd;
+  markdownEditor.dispatchEvent(new Event('input'));
+}
+
+markdownEditor.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+  let marker = null;
+  if (e.key === 'b' || e.key === 'B') marker = '**';
+  else if (e.key === 'i' || e.key === 'I') marker = '*';
+  else if (e.key === '`' || e.code === 'Backquote') marker = '`';
+  if (!marker) return;
+  e.preventDefault();
+  toggleEditorWrap(marker);
 });
 
 // Handle save result
 ipcRenderer.on('save-markdown-result', (event, data) => {
+  const request = pendingSaves.shift();
   if (data.success) {
     // Only sync originalMarkdown from the editor when in edit mode — in view
     // mode originalMarkdown is already the source of truth and the editor may
@@ -2415,8 +2572,8 @@ ipcRenderer.on('save-markdown-result', (event, data) => {
       originalMarkdown = markdownEditor.value;
       invalidateTranslationCache();
     }
-    hasUnsavedChanges = false;
-    updateUnsavedIndicator();
+    if (request) lastSavedContent = request.content;
+    setUnsavedChanges((isEditMode ? markdownEditor.value : originalMarkdown) !== lastSavedContent);
     console.log('File saved successfully');
 
     // Resume file tracking after save
@@ -2428,16 +2585,25 @@ ipcRenderer.on('save-markdown-result', (event, data) => {
     console.error('Save failed:', data.error);
     alert(i18n('alert.saveFailed') + data.error);
   }
+  if (request) request.resolve(!!data.success);
 });
 
-// Update unsaved indicator
+// Update unsaved indicators (editor header and file-info bar)
 function updateUnsavedIndicator() {
-  if (hasUnsavedChanges) {
-    unsavedIndicator.style.display = 'inline';
-  } else {
-    unsavedIndicator.style.display = 'none';
-  }
+  unsavedIndicator.style.display = hasUnsavedChanges ? 'inline' : 'none';
+  if (viewUnsavedIndicator) viewUnsavedIndicator.style.display = hasUnsavedChanges ? 'inline' : 'none';
 }
+
+// Single place that changes the dirty flag; main.js mirrors it to guard window close
+function setUnsavedChanges(value) {
+  const next = !!value;
+  const changed = next !== hasUnsavedChanges;
+  hasUnsavedChanges = next;
+  updateUnsavedIndicator();
+  if (changed) ipcRenderer.send('unsaved-changes-state', next);
+}
+
+if (viewUnsavedIndicator) viewUnsavedIndicator.addEventListener('click', () => saveMarkdownFile());
 
 // ============================================
 // RECENT FILES MANAGEMENT
@@ -2494,15 +2660,11 @@ function updateFileMenuRecent() {
       <span class="tools-menu-recent-path">${file.path}</span>
     `;
 
-    item.addEventListener('click', () => {
-      // Check for unsaved changes before opening
-      if (isEditMode && hasUnsavedChanges) {
-        if (!confirm(i18n('confirm.unsavedOpenFile', {name: file.name}))) {
-          return;
-        }
-      }
-      ipcRenderer.send('open-file-path', file.path);
+    item.addEventListener('click', async () => {
       fileMenu.classList.remove('visible');
+      // Check for unsaved changes before opening
+      if (!(await confirmUnsavedChanges())) return;
+      ipcRenderer.send('open-file-path', file.path);
     });
 
     item.addEventListener('contextmenu', (e) => {
@@ -2553,6 +2715,7 @@ function highlightSearchTerm(searchTerm) {
             node.parentNode.closest('svg') ||
             node.parentNode.closest('.omniware-rendered') ||
             node.parentNode.closest('.d2') ||
+            node.parentNode.closest('.tscircuit') ||
             node.parentNode.classList?.contains('search-highlight')) {
           return NodeFilter.FILTER_REJECT;
         }
@@ -2704,10 +2867,10 @@ function buildTableOfContents() {
     item.dataset.headerId = header.id;
 
     item.addEventListener('click', () => {
-      const targetHeader = document.getElementById(header.id);
+      const targetHeader = header.isConnected ? header : viewerElementById(header.id);
       if (targetHeader) {
         // Auto-expand any collapsed sections containing this header
-        expandToHeader(header.id);
+        expandCollapsedAncestors(targetHeader);
 
         // scrollIntoView correctly handles CSS `zoom` on the viewer.
         // 20px top padding comes from .content-wrapper's scroll-padding-top.
@@ -2771,28 +2934,6 @@ function makeHeadersCollapsible() {
       collapsedHeaders.set(header.id, isCollapsed);
     });
   });
-}
-
-// Auto-expand collapsed sections when navigating via TOC
-function expandToHeader(headerId) {
-  // Find the header element
-  const target = document.getElementById(headerId);
-  if (!target) return;
-
-  // Expand any collapsed ancestor sections that contain this header
-  let el = target.parentElement;
-  while (el && el !== viewer) {
-    if (el.classList.contains('collapsible-section') && el.classList.contains('collapsed')) {
-      el.classList.remove('collapsed');
-      const parentHeaderId = el.dataset.forHeader;
-      if (parentHeaderId) {
-        const parentHeader = document.getElementById(parentHeaderId);
-        if (parentHeader) parentHeader.classList.remove('collapsed');
-        collapsedHeaders.set(parentHeaderId, false);
-      }
-    }
-    el = el.parentElement;
-  }
 }
 
 // Index panel toggle
@@ -3079,7 +3220,28 @@ function parseMarkdownForTranslation(md) {
   let i = 0;
   const len = md.length;
 
+  // Front matter is metadata: keep it verbatim
+  const fmBody = OmdShared.extractFrontMatter(md).body;
+  if (fmBody.length < len) {
+    segments.push({ type: 'preserve', text: md.slice(0, len - fmBody.length) });
+    i = len - fmBody.length;
+  }
+
+  // Code blocks as marked sees them (``` and ~~~ fences, nested fences, indented code,
+  // diagram sources) are kept verbatim
+  const codeBlocks = getSourceCodeBlocks(md);
+  let nextBlock = 0;
+
   while (i < len) {
+    while (nextBlock < codeBlocks.length && codeBlocks[nextBlock].end <= i) nextBlock++;
+    const block = codeBlocks[nextBlock];
+    if (block && i >= block.start) {
+      segments.push({ type: 'preserve', text: md.slice(i, block.end) });
+      i = block.end;
+      continue;
+    }
+    const stopAt = block ? block.start : len;
+
     // Fenced code block
     if (md.startsWith('```', i)) {
       const endFence = md.indexOf('```', i + 3);
@@ -3143,7 +3305,7 @@ function parseMarkdownForTranslation(md) {
 
     // Regular text — collect until next special pattern
     let end = i + 1;
-    while (end < len) {
+    while (end < len && end < stopAt) {
       if (md[end] === '`' || md[end] === '<' || md[end] === '!' || md[end] === '[') break;
       if (md.startsWith('<span', end)) break;
       end++;
@@ -3298,18 +3460,127 @@ async function getD2Instance() {
   return d2Instance;
 }
 
+// ---- Where code blocks are in the source (as marked sees them) ----
+
+// marked.lexer() normalises line endings (\r\n, \r → \n) and turns leading tabs into
+// four spaces before tokenising. Rebuild that text together with a map from its
+// offsets back to offsets in `md` (map is null when nothing changes).
+function lexerNormalize(md) {
+  if (md.indexOf('\r') === -1 && md.indexOf('\t') === -1) return { norm: md, map: null };
+  const map = [];
+  const out = [];
+  const n = md.length;
+  let i = 0;
+  while (i < n) {
+    let j = i;
+    while (j < n && md[j] === ' ') j++;
+    let k = j;
+    while (k < n && md[k] === '\t') k++;
+    for (let p = i; p < j; p++) { map.push(p); out.push(' '); }
+    for (let p = j; p < k; p++) { for (let q = 0; q < 4; q++) { map.push(p); out.push(' '); } }
+    let p = k;
+    while (p < n && md[p] !== '\n' && md[p] !== '\r') { map.push(p); out.push(md[p]); p++; }
+    if (p >= n) break;
+    map.push(p);
+    out.push('\n');
+    if (md[p] === '\r' && md[p + 1] === '\n') p++;
+    i = p + 1;
+  }
+  map.push(n);
+  return { norm: out.join(''), map };
+}
+
+// Locate a code block nested in a list item / blockquote inside norm[from, to):
+// its raw text is de-indented by marked, so fall back to finding the fence lines.
+function findNestedCodeRange(norm, token, from, to) {
+  const exact = norm.indexOf(token.raw, from);
+  if (exact !== -1 && exact + token.raw.length <= to) return { start: exact, end: exact + token.raw.length };
+  const openRe = /^[ \t>]*(`{3,}|~{3,})[^\n]*$/gm;
+  openRe.lastIndex = from;
+  const open = openRe.exec(norm);
+  if (!open || open.index >= to) return null;
+  const fence = open[1];
+  const closeRe = new RegExp('^[ \\t>]*' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$', 'gm');
+  closeRe.lastIndex = open.index + open[0].length + 1;
+  const close = closeRe.exec(norm);
+  const end = close && close.index < to ? close.index + close[0].length : to;
+  return { start: open.index, end };
+}
+
+// Every code block (fenced or indented) of `md` in document order:
+// { start, end, lang, text, nested } with start/end as offsets into `md`.
+// Leading front matter is skipped, exactly like the renderer does.
+function getSourceCodeBlocks(md, { skipFrontMatter = true } = {}) {
+  const text = String(md || '');
+  if (!/`{3,}|~{3,}|^(?: {4}|\t)/m.test(text)) return [];
+  const body = skipFrontMatter ? OmdShared.extractFrontMatter(text).body : text;
+  const offset = text.length - body.length;
+  let tokens;
+  try { tokens = marked.lexer(body); } catch (e) { return []; }
+  const { norm, map } = lexerNormalize(body);
+  const toSource = (i) => offset + (map ? map[Math.min(i, map.length - 1)] : i);
+  const trimEnd = (start, end) => { while (end > start && norm[end - 1] === '\n') end--; return end; };
+  const blocks = [];
+  let cursor = 0;
+  for (const token of tokens) {
+    const raw = token.raw || '';
+    const start = norm.indexOf(raw, cursor);
+    if (start === -1) continue;
+    const end = start + raw.length;
+    cursor = end;
+    if (token.type === 'code') {
+      blocks.push({ start: toSource(start), end: toSource(trimEnd(start, end)), lang: token.lang || '', text: token.text || '', nested: false });
+      continue;
+    }
+    let local = start;
+    marked.walkTokens([token], (child) => {
+      if (child === token || child.type !== 'code') return;
+      const range = findNestedCodeRange(norm, child, local, end);
+      if (!range) return;
+      local = range.end;
+      blocks.push({ start: toSource(range.start), end: toSource(trimEnd(range.start, range.end)), lang: child.lang || '', text: child.text || '', nested: true });
+    });
+  }
+  return blocks;
+}
+
+// Diagram fences (mermaid / omniware / d2 / tscircuit) of `md`, in document order.
+function getSourceDiagramBlocks(md) {
+  const blocks = [];
+  getSourceCodeBlocks(md).forEach(block => {
+    const kind = OmdShared.diagramLang(block.lang);
+    if (kind) blocks.push(Object.assign({ kind }, block));
+  });
+  return blocks;
+}
+
+// Cheap superset test: some fence line names a diagram language
+const DIAGRAM_FENCE_HINT = /(`{3,}|~{3,})[ \t]*(mermaid|omniware|wireframe|d2|tscircuit)(?![\w-])/i;
+
+// True when marked would turn at least one fence of `md` into a diagram.
+function contentHasDiagrams(md) {
+  const text = removeBOM(String(md || ''));
+  if (!DIAGRAM_FENCE_HINT.test(text)) return false;
+  let found = false;
+  try {
+    marked.walkTokens(marked.lexer(OmdShared.extractFrontMatter(text).body), (token) => {
+      if (!found && token.type === 'code' && OmdShared.diagramLang(token.lang)) found = true;
+    });
+  } catch (e) {
+    return true; // unknown → take the full render path
+  }
+  return found;
+}
+
 // Detect render mode based on content diff
-function detectRenderMode(oldContent, newContent) {
+function detectRenderMode(oldContent, newContent, newHasDiagrams, oldHasDiagrams) {
   if (!oldContent) return 'full';
 
-  // Check if mermaid/omniware/d2/tscircuit/slider blocks changed
-  const hasMermaid = /```mermaid/i.test(newContent) || /```mermaid/i.test(oldContent);
-  const hasOmniware = /```omniware/i.test(newContent) || /```omniware/i.test(oldContent);
-  const hasD2 = /```d2/i.test(newContent) || /```d2/i.test(oldContent);
-  const hasTscircuit = /```tscircuit/i.test(newContent) || /```tscircuit/i.test(oldContent);
+  // Diagrams (same rules as the renderer) and sliders need the full pipeline
+  const hasDiagrams = newHasDiagrams || oldHasDiagrams;
   const hasSlider = /<!--\s*slider/i.test(newContent) || /<!--\s*slider/i.test(oldContent);
 
-  if (!hasMermaid && !hasOmniware && !hasD2 && !hasTscircuit && !hasSlider) {
+  if (!hasDiagrams && !hasSlider) {
     // Only text/format changes — check if images changed
     const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
     const oldImgs = [...oldContent.matchAll(imgRegex)].map(m => m[2]).join(',');
@@ -3320,6 +3591,321 @@ function detectRenderMode(oldContent, newContent) {
     return 'light-media'; // Images changed
   }
   return 'full';
+}
+
+// ---- Markdown → sanitised DOM (shared by the full and the light render path) ----
+
+const PURIFY_CONFIG = {
+  ADD_TAGS: ['iframe', 'style'],
+  ADD_ATTR: ['target', 'style', 'class', 'id', 'data-note-id', 'data-note-title', 'data-note-content', 'data-note-color']
+};
+
+// @@@html blocks run with scripts but in an opaque origin: no access to the app,
+// its DOM or Node (no allow-same-origin).
+const RAW_HTML_SANDBOX = 'allow-scripts allow-popups allow-forms';
+
+// Injected into every @@@html iframe: reports the content height to the viewer
+// (postMessage works across the sandbox boundary).
+const RAW_HTML_RESIZE_SCRIPT = '<scr' + 'ipt>(function(){' +
+  'var last=-1,sent=0;' +
+  'function notify(){var h=document.body?document.body.scrollHeight:0;if(h===last||sent>=50)return;last=h;sent++;' +
+  'parent.postMessage({type:"omnicore-rawhtml-resize",h:h},"*");}' +
+  'window.addEventListener("load",function(){notify();setTimeout(notify,100);setTimeout(notify,600);setTimeout(notify,1500);' +
+  'if(window.ResizeObserver&&document.body){new ResizeObserver(notify).observe(document.body);}});' +
+  '})();</scr' + 'ipt>';
+
+const IMG_ZOOM_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+
+// A local image path (relative to the open file, or absolute) as a file:// URL.
+// Returns null for web / data URLs or when no file is open.
+function resolveLocalFileUrl(src) {
+  if (!currentFilePath || !OmdShared.isLocalPath(src)) return null;
+  const target = OmdShared.parseLinkTarget(src);
+  if (target.kind !== 'file' || !target.path) return null;
+  let filePath = target.path;
+  if (/^\/[A-Za-z]:[\\/]/.test(filePath)) filePath = filePath.slice(1); // /C:/x → C:/x
+  const absolute = path.isAbsolute(filePath) ? filePath : path.resolve(path.dirname(currentFilePath), filePath);
+  try { return pathToFileURL(absolute).href; } catch (e) { return null; }
+}
+
+function setImageSource(img, src) {
+  const local = resolveLocalFileUrl(src);
+  if (local) {
+    img.setAttribute('data-omd-src', src); // what the markdown says (used to find the image in the source)
+    img.setAttribute('src', local);
+  } else {
+    img.setAttribute('src', src);
+  }
+}
+
+// Iframes written as HTML in the markdown: anything not loaded from the web (e.g. a
+// local .html file, same-origin with this window and so able to reach Node through
+// `parent.require`) gets the same sandbox as @@@html blocks.
+function sandboxUserIframes(root) {
+  root.querySelectorAll('iframe:not(.raw-html-block)').forEach(frame => {
+    if (!/^https?:\/\//i.test((frame.getAttribute('src') || '').trim())) frame.setAttribute('sandbox', RAW_HTML_SANDBOX);
+  });
+}
+
+function rewriteLocalImageSources(root) {
+  root.querySelectorAll('img[src]').forEach(img => {
+    const src = img.getAttribute('src');
+    if (resolveLocalFileUrl(src)) setImageSource(img, src);
+  });
+}
+
+// Sliders and @@@html blocks are not markdown, so they are cut out of the raw text
+// first (skipping anything inside a code block) and replaced by a plain-text token.
+const RAW_BLOCK_RE = /<!--\s*slider-start\s*-->([\s\S]*?)<!--\s*slider-end\s*-->|@@@html(?:\(([^)]*)\))?[\r\n]+([\s\S]*?)[\r\n]@@@/g;
+
+function extractRawBlocks(body, nonce) {
+  const blocks = [];
+  if (body.indexOf('slider-start') === -1 && body.indexOf('@@@html') === -1) return { content: body, blocks };
+  const codeBlocks = getSourceCodeBlocks(body, { skipFrontMatter: false });
+  let rawHtmlIndex = 0;
+  const content = body.replace(RAW_BLOCK_RE, (match, sliderInner, params, code, offset) => {
+    if (codeBlocks.some(b => offset >= b.start && offset < b.end)) return match; // example in a code block
+    if (!match.startsWith('@@@html')) {
+      const images = [];
+      const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+      let m;
+      while ((m = imgRegex.exec(sliderInner)) !== null) {
+        const src = m[2].trim().replace(/^<(.*)>$/, '$1').replace(/\s+["'(][\s\S]*$/, '');
+        images.push({ alt: m[1], src });
+      }
+      if (images.length === 0) return match; // no images found — leave unchanged
+      const token = `OMDPH${nonce}S${blocks.length}`;
+      blocks.push({ token, type: 'slider', images });
+      return token;
+    }
+    const token = `OMDPH${nonce}R${blocks.length}`;
+    blocks.push({ token, type: 'rawhtml', code, params: params || '', idx: rawHtmlIndex++ });
+    return token;
+  });
+  return { content, blocks };
+}
+
+function buildSliderElement(images) {
+  const slider = document.createElement('div');
+  slider.className = 'image-slider';
+  slider.setAttribute('data-slider-initialized', 'false');
+  slider.setAttribute('data-slider-total', String(images.length));
+  slider.setAttribute('data-slider-current', '0');
+
+  const track = document.createElement('div');
+  track.className = 'slider-track';
+  images.forEach((image, i) => {
+    const slide = document.createElement('div');
+    slide.className = 'slider-slide' + (i === 0 ? ' active' : '');
+    slide.setAttribute('data-index', String(i));
+    const img = document.createElement('img');
+    setImageSource(img, image.src);
+    img.setAttribute('alt', image.alt || '');
+    const zoomBtn = document.createElement('button');
+    zoomBtn.className = 'img-zoom-btn';
+    zoomBtn.title = 'Zoom';
+    zoomBtn.innerHTML = IMG_ZOOM_ICON_SVG;
+    slide.append(img, zoomBtn);
+    track.appendChild(slide);
+  });
+
+  const prev = document.createElement('button');
+  prev.className = 'slider-btn slider-prev';
+  prev.title = 'Previous';
+  prev.textContent = '\u2039';
+  const next = document.createElement('button');
+  next.className = 'slider-btn slider-next';
+  next.title = 'Next';
+  next.textContent = '\u203A';
+
+  const footer = document.createElement('div');
+  footer.className = 'slider-footer';
+  const dots = document.createElement('div');
+  dots.className = 'slider-dots';
+  images.forEach((_, i) => {
+    const dot = document.createElement('span');
+    dot.className = 'slider-dot' + (i === 0 ? ' active' : '');
+    dot.setAttribute('data-idx', String(i));
+    dots.appendChild(dot);
+  });
+  const counter = document.createElement('span');
+  counter.className = 'slider-counter';
+  counter.textContent = `1 / ${images.length}`;
+  footer.append(dots, counter);
+
+  slider.append(track, prev, next, footer);
+  return slider;
+}
+
+function buildRawHtmlElement(block) {
+  let zoomVal = 1;
+  const zoomMatch = block.params && block.params.match(/zoom\s*:\s*(\d+(?:\.\d+)?%?)/);
+  if (zoomMatch) {
+    zoomVal = zoomMatch[1].endsWith('%') ? parseFloat(zoomMatch[1]) / 100 : parseFloat(zoomMatch[1]);
+  }
+  if (!(zoomVal > 0)) zoomVal = 1;
+
+  const srcdoc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>html,body{margin:0;padding:0;}</style></head><body>' +
+    block.code + RAW_HTML_RESIZE_SCRIPT + '</body></html>';
+  const iframe = document.createElement('iframe');
+  iframe.className = 'raw-html-block';
+  iframe.setAttribute('sandbox', RAW_HTML_SANDBOX);
+  iframe.setAttribute('data-rawhtml-idx', String(block.idx));
+  iframe.setAttribute('scrolling', 'no');
+  iframe.setAttribute('srcdoc', srcdoc);
+  if (zoomVal === 1) {
+    iframe.setAttribute('style', 'width:100%;border:none;display:block;min-height:50px;');
+    return iframe;
+  }
+  iframe.setAttribute('data-rawhtml-zoom', String(zoomVal));
+  iframe.setAttribute('style', `width:${100 / zoomVal}%;border:none;display:block;transform:scale(${zoomVal});transform-origin:top left;position:absolute;top:0;left:0;`);
+  const wrapper = document.createElement('div');
+  wrapper.className = 'raw-html-wrapper';
+  wrapper.setAttribute('style', 'width:100%;overflow:hidden;position:relative;min-height:50px;');
+  wrapper.setAttribute('data-rawhtml-wrapper-idx', String(block.idx));
+  wrapper.appendChild(iframe);
+  return wrapper;
+}
+
+// Put slider / @@@html elements where their text tokens ended up.
+function restoreTextPlaceholders(root, blocks, nonce) {
+  if (!blocks.length) return;
+  const byToken = new Map(blocks.map(b => [b.token, b]));
+  const build = (b) => (b.type === 'slider' ? buildSliderElement(b.images) : buildRawHtmlElement(b));
+  const marker = 'OMDPH' + nonce;
+  const tokenRe = new RegExp(marker + '[SR]\\d+', 'g');
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const hits = [];
+  while (walker.nextNode()) {
+    if (walker.currentNode.nodeValue.indexOf(marker) !== -1) hits.push(walker.currentNode);
+  }
+  hits.forEach(node => {
+    const parent = node.parentNode;
+    if (!parent) return;
+    const text = node.nodeValue;
+    const whole = byToken.get(text.trim());
+    if (whole && parent.nodeName === 'P' && parent.childNodes.length === 1) {
+      parent.replaceWith(build(whole)); // token alone in its paragraph
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    text.replace(tokenRe, (token, off) => {
+      if (off > last) frag.appendChild(document.createTextNode(text.slice(last, off)));
+      const block = byToken.get(token);
+      frag.appendChild(block ? build(block) : document.createTextNode(token));
+      last = off + token.length;
+      return token;
+    });
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    parent.replaceChild(frag, node);
+  });
+}
+
+// The element a diagram fence renders to. The source is set through the DOM
+// (textContent / setAttribute), so nothing in it is parsed as HTML.
+function createDiagramElement(kind, code) {
+  if (kind === 'mermaid') {
+    const pre = document.createElement('pre');
+    pre.className = 'mermaid';
+    pre.setAttribute('data-mermaid-src', code);
+    pre.textContent = code;
+    return pre;
+  }
+  if (kind === 'd2' || kind === 'tscircuit') {
+    const div = document.createElement('div');
+    div.className = kind;
+    div.setAttribute(kind === 'd2' ? 'data-d2-src' : 'data-tscircuit-src', code);
+    const placeholder = document.createElement('div');
+    placeholder.className = kind === 'd2' ? 'd2-placeholder' : 'tscircuit-placeholder';
+    placeholder.textContent = kind === 'd2' ? 'Rendering D2 diagram…' : 'Rendering tscircuit schematic…';
+    div.appendChild(placeholder);
+    return div;
+  }
+  // omniware
+  const div = document.createElement('div');
+  try {
+    // OmniWare passes HTML through in several contexts (nav, badges, titles …):
+    // sanitise it like any other HTML in the document.
+    const renderedHtml = DOMPurify.sanitize(OmniWare.toHTML(code), PURIFY_CONFIG);
+    div.className = 'omniware-rendered';
+    div.setAttribute('data-omniware-dsl', code);
+    div.innerHTML = renderedHtml;
+  } catch (err) {
+    div.setAttribute('style', 'color: red; padding: 20px; background: #ffe6e6; border: 1px solid #ff0000; border-radius: 4px;');
+    const strong = document.createElement('strong');
+    strong.textContent = 'OmniWare Rendering Error:';
+    div.append(strong, document.createElement('br'), document.createTextNode(err.message));
+  }
+  return div;
+}
+
+function restoreDiagramPlaceholders(root, sink) {
+  if (!sink.items.length) return;
+  const prefix = sink.nonce + '-';
+  root.querySelectorAll('div.omd-diagram[data-omd-ph]').forEach(ph => {
+    const key = ph.getAttribute('data-omd-ph');
+    if (!key.startsWith(prefix)) return;
+    const item = sink.items[Number(key.slice(prefix.length))];
+    if (!item || item.used) return;
+    item.used = true;
+    ph.replaceWith(createDiagramElement(item.kind, item.code));
+  });
+}
+
+// Markdown → sanitised DocumentFragment with diagrams, sliders, @@@html blocks,
+// front matter and local image paths in place. Nothing is inserted into the page.
+function renderMarkdownToFragment(content) {
+  const text = removeBOM(String(content || ''));
+  const { body, frontMatter } = OmdShared.extractFrontMatter(text);
+  const nonce = Math.random().toString(36).slice(2, 10) || 'omd';
+  const raw = extractRawBlocks(body, nonce);
+
+  const sink = { nonce, items: [] };
+  diagramSink = sink;
+  let html;
+  try {
+    html = marked.parse(raw.content);
+  } finally {
+    diagramSink = null;
+  }
+  if (frontMatter) html = OmdShared.frontMatterHtml(frontMatter) + html;
+
+  // Protect data URI images from DOMPurify
+  const dataUriStore = [];
+  html = html.replace(/<img([^>]*?)src\s*=\s*"(data:image\/[^"]+)"([^>]*?)>/gi, (match, before, dataUri, after) => {
+    const idx = dataUriStore.length;
+    dataUriStore.push(dataUri);
+    return `<img${before}src="https://data-uri-placeholder.local/${idx}"${after}>`;
+  });
+
+  html = DOMPurify.sanitize(html, PURIFY_CONFIG);
+
+  dataUriStore.forEach((uri, idx) => {
+    html = html.replace(`https://data-uri-placeholder.local/${idx}`, () => uri);
+  });
+
+  // <template> parses inertly: no image requests before the src rewrite below
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const fragment = template.content;
+  sandboxUserIframes(fragment);
+  restoreDiagramPlaceholders(fragment, sink);
+  restoreTextPlaceholders(fragment, raw.blocks, nonce);
+  rewriteLocalImageSources(fragment);
+  return { fragment, diagramCount: sink.items.length };
+}
+
+// Heading ids (GitHub-style, from the text before emoji conversion, so
+// "## :rocket: Launch" → #rocket-launch), then emoji shortcodes in text nodes.
+function finalizeHeadingsAndEmoji() {
+  OmdShared.assignHeadingIds(viewer);
+  viewer.querySelectorAll('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]').forEach(h => {
+    // Never duplicate an app element id (e.g. a heading "Viewer" vs #viewer)
+    const other = document.getElementById(h.id);
+    if (other && other !== h && (other === viewer || !viewer.contains(other))) h.id = 'user-content-' + h.id;
+  });
+  OmdShared.applyEmoji(viewer, emojiMap);
 }
 
 // ---- Incremental DOM patching helpers ----
@@ -3345,12 +3931,18 @@ function _getBlockHash(el) {
 
 // Patch viewer's top-level children in-place — only replace nodes that actually changed.
 // Unchanged nodes (same hash) are left untouched, preserving scroll position and event listeners.
-function patchViewerDOM(newHtml) {
-  const temp = document.createElement('div');
-  temp.innerHTML = newHtml;
+// `newContent` is an HTML string or a DocumentFragment / element whose children are the new blocks.
+function patchViewerDOM(newContent) {
+  let newEls;
+  if (typeof newContent === 'string') {
+    const temp = document.createElement('div');
+    temp.innerHTML = newContent;
+    newEls = Array.from(temp.children);
+  } else {
+    newEls = Array.from(newContent.children);
+  }
 
   // Stamp each new element with a hash of its content (computed before setting the attr)
-  const newEls = Array.from(temp.children);
   newEls.forEach(el => { el.dataset.blockHash = _blockHash(el.outerHTML); });
 
   const oldEls = Array.from(viewer.children);
@@ -3386,100 +3978,18 @@ function patchViewerDOM(newHtml) {
 function renderLightFormat(content, generation) {
   if (generation !== renderGeneration) return;
 
-  content = removeBOM(content);
-
-  // Extract and placeholder special blocks (same as full render)
-  const mermaidBlocks = [];
-  content = content.replace(/```mermaid[\r\n]+([\s\S]*?)```/g, (match, code) => {
-    const ph = `MERMAID_PH_${mermaidBlocks.length}`;
-    mermaidBlocks.push({ ph, code: code.trim() });
-    return ph;
-  });
-
-  const d2BlocksLF = [];
-  content = content.replace(/```d2[\r\n]+([\s\S]*?)```/g, (match, code) => {
-    const ph = `D2_PH_${d2BlocksLF.length}`;
-    d2BlocksLF.push({ ph, code: code.trim() });
-    return ph;
-  });
-
-  // Extract @@@html blocks
-  const rawHtmlBlocksLF = [];
-  content = content.replace(/@@@html(?:\(([^)]*)\))?[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, params, code) => {
-    const ph = `RAWHTML_PH_${rawHtmlBlocksLF.length}`;
-    rawHtmlBlocksLF.push({ ph, code, params: params || '' });
-    return ph;
-  });
-
-  let html = marked.parse(content);
-
-  // Restore mermaid placeholders — patchViewerDOM will keep existing SVGs for same source
-  mermaidBlocks.forEach(({ ph, code }) => {
-    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    html = html.replace(new RegExp(`<p>${ph}</p>|${ph}`), `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`);
-  });
-
-  // Restore d2 placeholders as stub divs (renderD2Diagrams below will fill them in)
-  d2BlocksLF.forEach(({ ph, code }) => {
-    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    html = html.replace(new RegExp(`<p>${ph}</p>|${ph}`), `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`);
-  });
-
-  // Restore @@@html placeholders as sandboxed iframes
-  rawHtmlBlocksLF.forEach(({ ph, code, params }, idx) => {
-    let zoomVal = 1;
-    if (params) {
-      const zoomMatch = params.match(/zoom\s*:\s*(\d+(?:\.\d+)?%?)/);
-      if (zoomMatch) {
-        zoomVal = zoomMatch[1].endsWith('%') ? parseFloat(zoomMatch[1]) / 100 : parseFloat(zoomMatch[1]);
-      }
-    }
-    const srcdoc = [
-      '<!DOCTYPE html><html><head>',
-      '<meta charset="UTF-8">',
-      '<style>html,body{margin:0;padding:0;}</style>',
-      '</head><body>',
-      code,
-      '<scr' + 'ipt>',
-      'window.addEventListener("load",function(){',
-      '  function notify(){window.parent.postMessage({type:"omnicore-rawhtml-resize",idx:' + idx + ',h:document.body.scrollHeight},"*");}',
-      '  setTimeout(notify,100);setTimeout(notify,600);setTimeout(notify,1500);',
-      '});',
-      '</scr' + 'ipt>',
-      '</body></html>'
-    ].join('');
-    const escaped = srcdoc.replace(/"/g, '&quot;');
-    let iframeHtml;
-    if (zoomVal !== 1) {
-      const scaledWidth = (100 / zoomVal) + '%';
-      iframeHtml = `<div class="raw-html-wrapper" style="width:100%;overflow:hidden;position:relative;min-height:50px;" data-rawhtml-wrapper-idx="${idx}"><iframe class="raw-html-block" data-rawhtml-idx="${idx}" data-rawhtml-zoom="${zoomVal}" srcdoc="${escaped}" style="width:${scaledWidth};border:none;display:block;transform:scale(${zoomVal});transform-origin:top left;position:absolute;top:0;left:0;" scrolling="no"></iframe></div>`;
-    } else {
-      iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
-    }
-    html = html.replace(new RegExp(`<p>${ph}</p>|${ph}`), iframeHtml);
-  });
-
-  // Protect data URIs
-  const dataUriStore = [];
-  html = html.replace(/<img([^>]*?)src\s*=\s*"(data:image\/[^"]+)"([^>]*?)>/gi, (match, before, dataUri, after) => {
-    const idx = dataUriStore.length;
-    dataUriStore.push(dataUri);
-    return `<img${before}src="https://data-uri-placeholder.local/${idx}"${after}>`;
-  });
-
-  html = DOMPurify.sanitize(html, {
-    ADD_TAGS: ['iframe', 'style'],
-    ADD_ATTR: ['target', 'style', 'class', 'id', 'data-note-id', 'data-note-title', 'data-note-content', 'data-note-color']
-  });
-
-  dataUriStore.forEach((uri, idx) => {
-    html = html.replace(`https://data-uri-placeholder.local/${idx}`, uri);
-  });
+  const rendered = renderMarkdownToFragment(content);
+  // Same diagram rules as the full path: anything that turned into a diagram needs it
+  if (rendered.diagramCount > 0) {
+    renderMarkdownFull(content, generation, rendered);
+    return;
+  }
 
   if (generation !== renderGeneration) return;
 
-  patchViewerDOM(html);
+  patchViewerDOM(rendered.fragment);
   applyNoteStyles();
+  finalizeHeadingsAndEmoji();
   addTableMaximizeButtons();
   initImageZoom();
   buildTableOfContents();
@@ -3503,22 +4013,25 @@ function highlightNewElements() {
 
 // Smart render dispatcher — chooses mode based on content diff
 let _lastRenderedContent = null;
+let _lastRenderedHasDiagrams = false;
 async function renderMarkdown(content, forceMode = null) {
   const generation = ++renderGeneration;
-  const mode = forceMode || detectRenderMode(_lastRenderedContent, content);
+  const previousContent = _lastRenderedContent;
+  const hasDiagrams = contentHasDiagrams(content);
+  const mode = forceMode || detectRenderMode(previousContent, content, hasDiagrams, _lastRenderedHasDiagrams);
+  _lastRenderedContent = content;
+  _lastRenderedHasDiagrams = hasDiagrams;
 
-  if (mode === 'light-format' && _lastRenderedContent !== null) {
-    _lastRenderedContent = content;
+  if (mode === 'light-format' && previousContent !== null) {
     renderLightFormat(content, generation); // sync — no await needed
     return;
   }
 
-  _lastRenderedContent = content;
   return renderMarkdownFull(content, generation);
 }
 
 // Full render pipeline
-async function renderMarkdownFull(content, generation) {
+async function renderMarkdownFull(content, generation, prerendered = null) {
   // Show loading screen
   showLoadingScreen();
 
@@ -3526,207 +4039,16 @@ async function renderMarkdownFull(content, generation) {
   await new Promise(resolve => setTimeout(resolve, 10));
 
   try {
-    // Remove BOM (Byte Order Mark) if present
-    content = removeBOM(content);
-
-    // Parse emoji shortcodes (e.g., :star: -> ⭐)
-    content = parseEmojis(content);
-
-    // Extract image slider blocks and replace with placeholders
-    const sliderBlocks = [];
-    let sliderIndex = 0;
-    content = content.replace(/<!--\s*slider-start\s*-->([\s\S]*?)<!--\s*slider-end\s*-->/g, (match, inner) => {
-      const placeholder = `SLIDER_PLACEHOLDER_${sliderIndex}`;
-      // Extract images from the inner block
-      const images = [];
-      const imgRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-      let imgMatch;
-      while ((imgMatch = imgRegex.exec(inner)) !== null) {
-        images.push({ alt: imgMatch[1], src: imgMatch[2] });
-      }
-      if (images.length > 0) {
-        sliderBlocks.push({ placeholder, images });
-        sliderIndex++;
-        return placeholder;
-      }
-      return match; // no images found — leave unchanged
-    });
-
-    // First, extract mermaid blocks and replace with placeholders
-    const mermaidBlocks = [];
-    let mermaidIndex = 0;
-
-  // Replace mermaid code blocks with placeholders (handle both \n and \r\n)
-  content = content.replace(/```mermaid[\r\n]+([\s\S]*?)```/g, (match, code) => {
-    const placeholder = `MERMAID_PLACEHOLDER_${mermaidIndex}`;
-    mermaidBlocks.push({ placeholder, code: code.trim() });
-    mermaidIndex++;
-    return placeholder;
-  });
-
-    // Extract omniware blocks and replace with placeholders
-    const omniwareBlocks = [];
-    let omniwareIndex = 0;
-    content = content.replace(/```omniware[\r\n]+([\s\S]*?)```/g, (match, code) => {
-      const placeholder = `OMNIWARE_PLACEHOLDER_${omniwareIndex}`;
-      omniwareBlocks.push({ placeholder, code: code.trim() });
-      omniwareIndex++;
-      return placeholder;
-    });
-
-    // Extract d2 blocks and replace with placeholders
-    const d2Blocks = [];
-    let d2Index = 0;
-    content = content.replace(/```d2[\r\n]+([\s\S]*?)```/g, (match, code) => {
-      const placeholder = `D2_PLACEHOLDER_${d2Index}`;
-      d2Blocks.push({ placeholder, code: code.trim() });
-      d2Index++;
-      return placeholder;
-    });
-
-    // Extract tscircuit (TSX) blocks. Rendered via the tscircuit bundle.
-    const tscircuitBlocks = [];
-    let tscircuitIndex = 0;
-    content = content.replace(/```tscircuit[\r\n]+([\s\S]*?)```/g, (match, code) => {
-      const placeholder = `TSCIRCUIT_PLACEHOLDER_${tscircuitIndex}`;
-      tscircuitBlocks.push({ placeholder, code: code.trim() });
-      tscircuitIndex++;
-      return placeholder;
-    });
-
-    // Extract @@@html blocks and replace with placeholders (bypasses DOMPurify)
-    const rawHtmlBlocks = [];
-    let rawHtmlIndex = 0;
-    content = content.replace(/@@@html(?:\(([^)]*)\))?[\r\n]+([\s\S]*?)[\r\n]@@@/g, (match, params, code) => {
-      const placeholder = `RAWHTML_PLACEHOLDER_${rawHtmlIndex}`;
-      rawHtmlBlocks.push({ placeholder, code, params: params || '' });
-      rawHtmlIndex++;
-      return placeholder;
-    });
-
-  // Parse markdown with marked (allows HTML)
-  let html = marked.parse(content);
-
-  // Protect data URI images from DOMPurify (it strips data: URIs by default)
-  const dataUriStore = [];
-  html = html.replace(/<img([^>]*?)src\s*=\s*"(data:image\/[^"]+)"([^>]*?)>/gi, (match, before, dataUri, after) => {
-    const idx = dataUriStore.length;
-    dataUriStore.push(dataUri);
-    return `<img${before}src="https://data-uri-placeholder.local/${idx}"${after}>`;
-  });
-
-  // Sanitize HTML but allow most tags for rich content
-  html = DOMPurify.sanitize(html, {
-    ADD_TAGS: ['iframe', 'style'],
-    ADD_ATTR: ['target', 'style', 'class', 'id', 'data-note-id', 'data-note-title', 'data-note-content', 'data-note-color']
-  });
-
-  // Restore data URI images after sanitization
-  dataUriStore.forEach((uri, idx) => {
-    html = html.replace(`https://data-uri-placeholder.local/${idx}`, uri);
-  });
-
-  // Replace slider placeholders with slider HTML
-  sliderBlocks.forEach(({ placeholder, images }) => {
-    const zoomBtnHtml = `<button class="img-zoom-btn" title="Zoom"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>`;
-    const slidesHtml = images.map((img, i) =>
-      `<div class="slider-slide${i === 0 ? ' active' : ''}" data-index="${i}">
-        <img src="${img.src}" alt="${img.alt || ''}">
-        ${zoomBtnHtml}
-      </div>`
-    ).join('');
-    const dotsHtml = images.map((_, i) =>
-      `<span class="slider-dot${i === 0 ? ' active' : ''}" data-idx="${i}"></span>`
-    ).join('');
-    const sliderHtml = `<div class="image-slider" data-slider-initialized="false" data-slider-total="${images.length}" data-slider-current="0">
-      <div class="slider-track">${slidesHtml}</div>
-      <button class="slider-btn slider-prev" title="Previous">&#8249;</button>
-      <button class="slider-btn slider-next" title="Next">&#8250;</button>
-      <div class="slider-footer">
-        <div class="slider-dots">${dotsHtml}</div>
-        <span class="slider-counter">1 / ${images.length}</span>
-      </div>
-    </div>`;
-    // Use a regex to handle the placeholder that may be wrapped in <p> by marked
-    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), sliderHtml);
-  });
-
-  // Replace placeholders with mermaid divs
-  mermaidBlocks.forEach(({ placeholder, code }) => {
-    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    const mermaidDiv = `<pre class="mermaid" data-mermaid-src="${escapedSrc}">${code}</pre>`;
-    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), mermaidDiv);
-  });
-
-  // Replace placeholders with d2 stub divs (rendered async after DOM insertion)
-  d2Blocks.forEach(({ placeholder, code }) => {
-    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    const d2Div = `<div class="d2" data-d2-src="${escapedSrc}"><div class="d2-placeholder">Rendering D2 diagram…</div></div>`;
-    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), d2Div);
-  });
-
-  // Replace placeholders with tscircuit stub divs (rendered async — first load
-  // pulls a 5MB bundle so the placeholder shows progress to the user)
-  tscircuitBlocks.forEach(({ placeholder, code }) => {
-    const escapedSrc = code.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const tscircuitDiv = `<div class="tscircuit" data-tscircuit-src="${escapedSrc}"><div class="tscircuit-placeholder">Rendering tscircuit schematic…</div></div>`;
-    html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), tscircuitDiv);
-  });
-
-    // Replace placeholders with rendered omniware wireframes
-    omniwareBlocks.forEach(({ placeholder, code }) => {
-      try {
-        const renderedHtml = OmniWare.toHTML(code);
-        const escapedDsl = code.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const omniwareDiv = `<div class="omniware-rendered" data-omniware-dsl="${escapedDsl}">${renderedHtml}</div>`;
-        html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), omniwareDiv);
-      } catch (err) {
-        const errorDiv = `<div style="color: red; padding: 20px; background: #ffe6e6; border: 1px solid #ff0000; border-radius: 4px;">
-          <strong>OmniWare Rendering Error:</strong><br>${err.message}
-        </div>`;
-        html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), errorDiv);
-      }
-    });
-
-    // Replace @@@html placeholders with sandboxed iframes (allows Tailwind CDN and scripts to run)
-    rawHtmlBlocks.forEach(({ placeholder, code, params }, idx) => {
-      let zoomVal = 1;
-      if (params) {
-        const zoomMatch = params.match(/zoom\s*:\s*(\d+(?:\.\d+)?%?)/);
-        if (zoomMatch) {
-          zoomVal = zoomMatch[1].endsWith('%') ? parseFloat(zoomMatch[1]) / 100 : parseFloat(zoomMatch[1]);
-        }
-      }
-      const srcdoc = [
-        '<!DOCTYPE html><html><head>',
-        '<meta charset="UTF-8">',
-        '<style>html,body{margin:0;padding:0;}</style>',
-        '</head><body>',
-        code,
-        '<scr' + 'ipt>',
-        'window.addEventListener("load",function(){',
-        '  function notify(){window.parent.postMessage({type:"omnicore-rawhtml-resize",idx:' + idx + ',h:document.body.scrollHeight},"*");}',
-        '  setTimeout(notify,100);setTimeout(notify,600);setTimeout(notify,1500);',
-        '});',
-        '</scr' + 'ipt>',
-        '</body></html>'
-      ].join('');
-      const escaped = srcdoc.replace(/"/g, '&quot;');
-      let iframeHtml;
-      if (zoomVal !== 1) {
-        const scaledWidth = (100 / zoomVal) + '%';
-        iframeHtml = `<div class="raw-html-wrapper" style="width:100%;overflow:hidden;position:relative;min-height:50px;" data-rawhtml-wrapper-idx="${idx}"><iframe class="raw-html-block" data-rawhtml-idx="${idx}" data-rawhtml-zoom="${zoomVal}" srcdoc="${escaped}" style="width:${scaledWidth};border:none;display:block;transform:scale(${zoomVal});transform-origin:top left;position:absolute;top:0;left:0;" scrolling="no"></iframe></div>`;
-      } else {
-        iframeHtml = `<iframe class="raw-html-block" data-rawhtml-idx="${idx}" srcdoc="${escaped}" style="width:100%;border:none;display:block;min-height:50px;" scrolling="no"></iframe>`;
-      }
-      html = html.replace(new RegExp(`<p>${placeholder}</p>|${placeholder}`), iframeHtml);
-    });
+    const { fragment } = prerendered || renderMarkdownToFragment(content);
 
   // Patch only changed DOM nodes — preserves scroll, avoids full relayout
-  patchViewerDOM(html);
+  patchViewerDOM(fragment);
 
   // Apply note styles immediately after DOM insertion (before async callbacks)
   applyNoteStyles();
+
+  // Heading ids before the TOC / collapsible logic, emoji after them
+  finalizeHeadingsAndEmoji();
 
   // Re-run mermaid on the new content, reusing cached SVGs for unchanged diagrams
   try {
@@ -3827,8 +4149,9 @@ async function renderMarkdownFull(content, generation) {
       const isDarkMode = document.body.classList.contains('dark-mode');
       updateOmniWareDarkMode(isDarkMode);
 
-      // Wrap each in container and add maximize button
+      // Wrap each in container and add maximize button (kept, unchanged blocks already are)
       omniwareElements.forEach((el) => {
+        if (el.closest('.omniware-container')) return;
         const container = document.createElement('div');
         container.className = 'omniware-container';
         el.parentNode.insertBefore(container, el);
@@ -3844,8 +4167,7 @@ async function renderMarkdownFull(content, generation) {
         `;
 
         maxBtn.addEventListener('click', () => {
-          const dslCode = el.getAttribute('data-omniware-dsl')
-            .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+          const dslCode = el.getAttribute('data-omniware-dsl') || '';
           const isDark = document.body.classList.contains('dark-mode');
           ipcRenderer.send('open-omniware-popup', { dslCode, isDarkMode: isDark, isCorporateMode: corporateMode });
         });
@@ -3997,8 +4319,8 @@ function addTableMaximizeButtons() {
   const updates = [];
 
   tables.forEach((table) => {
-    // Skip if already wrapped
-    if (table.parentNode.classList?.contains('table-container')) {
+    // Skip if already wrapped; front matter is metadata, not a data table
+    if (table.parentNode.classList?.contains('table-container') || table.classList.contains('front-matter')) {
       return;
     }
 
@@ -4197,18 +4519,18 @@ ipcRenderer.on('file-opened', async (event, data) => {
 
   // Store original markdown for editor
   originalMarkdown = data.content;
+  lastSavedContent = data.content;
 
   // If in edit mode, update editor content
   if (isEditMode) {
     markdownEditor.value = originalMarkdown;
-    hasUnsavedChanges = false;
-    updateUnsavedIndicator();
   }
+  setUnsavedChanges(false);
+
+  // Update file info bar first: relative image paths resolve against this file
+  updateFileInfo(data.path);
 
   await renderMarkdown(data.content);
-
-  // Update file info bar
-  updateFileInfo(data.path);
 
   // Handle navigation history and scroll position
   if (isNavigating) {
@@ -4226,6 +4548,13 @@ ipcRenderer.on('file-opened', async (event, data) => {
     addToNavigationHistory(data.path, 0);
     // Scroll to top for new files
     contentWrapper.scrollTop = 0;
+  }
+
+  // Opened from a link like other.md#section → scroll to the section
+  const anchor = pendingLinkAnchor;
+  pendingLinkAnchor = null;
+  if (anchor && anchor.path === data.path && anchor.fragment) {
+    scrollToFragment(anchor.fragment, 'auto');
   }
 
   // Enable file tracking
@@ -4269,6 +4598,7 @@ ipcRenderer.on('file-deleted', (event, data) => {
 // Handle file not found (from recent files or links)
 ipcRenderer.on('file-not-found', (event, data) => {
   console.log('File not found:', data.path);
+  pendingLinkAnchor = null;
   showNotification(i18n('notif.fileNotFound') + path.basename(data.path), 4000);
 
   // Remove from recent files if it exists there
@@ -4286,13 +4616,13 @@ ipcRenderer.on('file-reload-result', async (event, data) => {
     // Reset translation and store new content
     resetTranslationState();
     originalMarkdown = data.content;
+    lastSavedContent = data.content;
 
     // If in edit mode, update editor content
     if (isEditMode) {
       markdownEditor.value = originalMarkdown;
-      hasUnsavedChanges = false;
-      updateUnsavedIndicator();
     }
+    setUnsavedChanges(false);
 
     // Re-render the markdown
     await renderMarkdown(data.content);
@@ -4307,16 +4637,12 @@ ipcRenderer.on('file-reload-result', async (event, data) => {
   }
 });
 
-// Handle external file open request (from double-clicking a file when app is already open)
-ipcRenderer.on('external-file-open-request', (event, data) => {
+// Handle external file open request (second instance / CLI, macOS open-file)
+ipcRenderer.on('external-file-open-request', async (event, data) => {
   const { filePath } = data;
 
   // Check for unsaved changes
-  if (isEditMode && hasUnsavedChanges) {
-    if (!confirm(i18n('confirm.unsavedOpenFile', {name: filePath.split(/[\\/]/).pop()}))) {
-      return; // User canceled, don't open the new file
-    }
-  }
+  if (!(await confirmUnsavedChanges())) return;
 
   // Proceed with opening the file
   ipcRenderer.send('request-open-file', { filePath });
@@ -4803,7 +5129,7 @@ function applyMarkdownFormat(wrapper, multiline = false) {
     markdownEditor.selectionStart = start;
     markdownEditor.selectionEnd = start + formattedText.length;
 
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
 
     clearTimeout(previewDebounceTimer);
@@ -4942,7 +5268,7 @@ ctxCode.addEventListener('click', () => {
     markdownEditor.selectionEnd = start + formattedText.length;
 
     // Mark as unsaved
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
 
     // Trigger preview update
@@ -5032,7 +5358,7 @@ ctxRemoveFormat.addEventListener('click', () => {
     markdownEditor.selectionEnd = start + cleanText.length;
 
     // Mark as unsaved
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
 
     // Trigger preview update
@@ -5376,7 +5702,7 @@ ctxDeleteNote.addEventListener('click', () => {
         replacement +
         editorVal.substring(match.index + match[0].length);
 
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
 
       clearTimeout(previewDebounceTimer);
@@ -5418,7 +5744,7 @@ ctxDeleteNote.addEventListener('click', () => {
         originalMarkdown = newContent;
         invalidateTranslationCache();
       }
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
 
       // DOM patch — preserves mermaid diagrams and avoids full re-render
       if (nid) {
@@ -5503,7 +5829,7 @@ noteSaveBtn.addEventListener('click', () => {
           newNoteHtml +
           editorVal.substring(match.index + match[0].length);
 
-        hasUnsavedChanges = true;
+        setUnsavedChanges(true);
         updateUnsavedIndicator();
 
         clearTimeout(previewDebounceTimer);
@@ -5574,7 +5900,7 @@ noteSaveBtn.addEventListener('click', () => {
           originalMarkdown = newContent;
           invalidateTranslationCache();
         }
-        hasUnsavedChanges = true;
+        setUnsavedChanges(true);
 
         // DOM patch — build updates based on note type, preserves mermaid diagrams
         const domUpdates = { title, content };
@@ -5626,7 +5952,7 @@ noteSaveBtn.addEventListener('click', () => {
 
     let noteHtml;
     if (isImageTarget) {
-      const imgSrc = rightClickTarget.getAttribute('src') || '';
+      const imgSrc = rightClickTarget.getAttribute('data-omd-src') || rightClickTarget.getAttribute('src') || '';
       const imgAlt = rightClickTarget.getAttribute('alt') || '';
       const escapedSrc = imgSrc.replace(/"/g, '&quot;');
       const escapedAlt = imgAlt.replace(/"/g, '&quot;');
@@ -5661,7 +5987,7 @@ noteSaveBtn.addEventListener('click', () => {
       markdownEditor.selectionStart = start;
       markdownEditor.selectionEnd = start + replacement.length;
 
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
 
       clearTimeout(previewDebounceTimer);
@@ -5675,7 +6001,7 @@ noteSaveBtn.addEventListener('click', () => {
       const markdownContent = getActiveMarkdown();
 
       if (isImageTarget) {
-        const imgSrc = rightClickTarget.getAttribute('src') || '';
+        const imgSrc = rightClickTarget.getAttribute('data-omd-src') || rightClickTarget.getAttribute('src') || '';
         const imgAlt = rightClickTarget.getAttribute('alt') || '';
         let found = false;
         const mdImgPattern = `![${imgAlt}](${imgSrc})`;
@@ -5747,7 +6073,7 @@ noteSaveBtn.addEventListener('click', () => {
       markdownEditor.selectionStart = newPos;
       markdownEditor.selectionEnd = newPos;
 
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
 
       clearTimeout(previewDebounceTimer);
@@ -5978,7 +6304,7 @@ function updateSourceSilently(oldText, newText, occurrence) {
     }
     invalidateTranslationCache();
   }
-  hasUnsavedChanges = true;
+  setUnsavedChanges(true);
   updateUnsavedIndicator();
 }
 
@@ -5998,7 +6324,7 @@ editTextSaveBtn.addEventListener('click', () => {
         newText +
         editorVal.substring(textIndex + editTextOriginal.length);
 
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
 
       clearTimeout(previewDebounceTimer);
@@ -6238,12 +6564,15 @@ function getInsertPositionForLabel() {
   return getMarkdownInsertPosition();
 }
 
-// Build an array of {start, end} positions for each marked.js top-level token in md
+// Build an array of {start, end} positions for each marked.js top-level token in md.
+// Leading front matter (rendered as one table) counts as a single block.
 function getTokenPositions(md) {
+  const body = OmdShared.extractFrontMatter(md).body;
+  const fmLength = md.length - body.length;
   let tokens;
-  try { tokens = marked.lexer(md); } catch (e) { return []; }
-  const positions = [];
-  let scanPos = 0;
+  try { tokens = marked.lexer(body); } catch (e) { return []; }
+  const positions = fmLength > 0 ? [{ start: 0, end: fmLength }] : [];
+  let scanPos = fmLength;
   for (const token of tokens) {
     const raw = token.raw;
     if (!raw) continue;
@@ -6345,7 +6674,7 @@ function insertImageMarkdown(imageMarkdown, originalSize, compressedSize) {
     markdownEditor.selectionStart = newPos;
     markdownEditor.selectionEnd = newPos;
 
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
 
     clearTimeout(previewDebounceTimer);
@@ -6397,7 +6726,7 @@ function insertImageMarkdown(imageMarkdown, originalSize, compressedSize) {
             renderMarkdown(originalMarkdown, 'full').then(() => {
               contentWrapper.scrollTop = scrollPosition;
             });
-            hasUnsavedChanges = true;
+            setUnsavedChanges(true);
             showNotification('Slider created', 1500);
             return;
           }
@@ -6521,7 +6850,7 @@ ctxDeleteImage.addEventListener('click', () => {
 
     markdownEditor.value = content.substring(0, removeStart) + content.substring(removeEnd);
 
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
     clearTimeout(previewDebounceTimer);
     previewDebounceTimer = setTimeout(() => {
@@ -6584,7 +6913,8 @@ ctxCopyImageSrc && ctxCopyImageSrc.addEventListener('click', () => {
   if (!rightClickTarget) return;
   const imgEl = rightClickTarget.tagName === 'IMG' ? rightClickTarget : rightClickTarget.closest?.('img');
   if (imgEl && imgEl.src) {
-    clipboard.writeText(imgEl.src);
+    // Local images: copy the path as written in the markdown, not the file:// URL
+    clipboard.writeText(imgEl.getAttribute('data-omd-src') || imgEl.src);
     showNotification(i18n('notif.copied'), 1500);
   }
 });
@@ -6694,7 +7024,7 @@ ctxAddToSlider && ctxAddToSlider.addEventListener('click', () => {
 
   if (isEditMode) {
     markdownEditor.value = newContent;
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
     clearTimeout(previewDebounceTimer);
     previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
@@ -6705,7 +7035,7 @@ ctxAddToSlider && ctxAddToSlider.addEventListener('click', () => {
     renderMarkdown(originalMarkdown, 'full').then(() => {
       contentWrapper.scrollTop = scrollPosition;
     });
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
   }
   showNotification('Slider created', 1500);
 });
@@ -6718,7 +7048,7 @@ function applySliderImageAdd(newImgMd, insertPos) {
 
   if (isEditMode) {
     markdownEditor.value = newContent;
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
     clearTimeout(previewDebounceTimer);
     previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
@@ -6729,7 +7059,7 @@ function applySliderImageAdd(newImgMd, insertPos) {
     renderMarkdown(originalMarkdown, 'full').then(() => {
       contentWrapper.scrollTop = scrollPosition;
     });
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
   }
   showNotification('Image added to slider', 1500);
 }
@@ -6811,53 +7141,52 @@ function normalizeMermaidCode(s) {
   return (s || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 }
 
+// The fenced block in `content` that produced the rendered diagram `mermaidEl`:
+// the n-th rendered Mermaid diagram is the n-th real ```mermaid / ~~~mermaid fence
+// (fences inside other code blocks don't count). The source text double-checks it.
+function findMermaidSourceBlock(content, mermaidEl) {
+  const blocks = getSourceDiagramBlocks(content).filter(b => b.kind === 'mermaid');
+  if (blocks.length === 0) return null;
+  const rendered = Array.from(viewer.querySelectorAll('.mermaid'));
+  const n = rendered.indexOf(mermaidEl);
+  const src = normalizeMermaidCode(mermaidEl?.dataset?.mermaidSrc);
+  if (n >= 0 && blocks[n] && (!src || normalizeMermaidCode(blocks[n].text) === src)) return blocks[n];
+  if (src) {
+    // DOM and source disagree (e.g. a diagram inserted without re-render): the k-th
+    // diagram with this source is the k-th block with this source.
+    const same = blocks.filter(b => normalizeMermaidCode(b.text) === src);
+    if (same.length) {
+      const k = rendered.slice(0, Math.max(n, 0)).filter(el => normalizeMermaidCode(el.dataset.mermaidSrc) === src).length;
+      return same[Math.min(k, same.length - 1)];
+    }
+  }
+  return blocks.length === 1 ? blocks[0] : null;
+}
+
+// Replace the body of a fenced block, keeping its fence lines and indentation / "> " prefix.
+function replaceFencedBlockBody(content, block, code) {
+  const text = content.slice(block.start, block.end);
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const open = /^([ \t>]*)(`{3,}|~{3,})/.exec(lines[0]);
+  if (!open) return content.slice(0, block.start) + '```mermaid' + eol + code + eol + '```' + content.slice(block.end);
+  const prefix = open[1];
+  const fence = open[2];
+  const last = lines.length > 1 ? lines[lines.length - 1] : '';
+  const hasClose = lines.length > 1 &&
+    new RegExp('^[ \\t>]*' + (fence[0] === '`' ? '`' : '~') + '{' + fence.length + ',}[ \\t]*$').test(last);
+  const body = code.split(/\r?\n/).map(line => prefix + line).join(eol);
+  const closing = hasClose ? last : prefix + fence;
+  return content.slice(0, block.start) + lines[0] + eol + body + eol + closing + content.slice(block.end);
+}
+
 function deleteMermaidFromSource(svgTexts, mermaidEl) {
   const content = isEditMode ? markdownEditor.value : originalMarkdown;
-  const blocks = [];
-  // Allow optional spaces/tabs before the newline after ```mermaid, and one or more newlines
-  const mermaidBlockRegex = /```mermaid[^\S\r\n]*[\r\n]+([\s\S]*?)```/g;
-  let m;
-  while ((m = mermaidBlockRegex.exec(content)) !== null) {
-    blocks.push({ start: m.index, end: m.index + m[0].length, code: m[1] });
-  }
-
-  if (blocks.length === 0) {
+  const bestBlock = findMermaidSourceBlock(content, mermaidEl);
+  if (!bestBlock) {
     showNotification('Could not find mermaid block in source', 2000);
     return;
   }
-
-  let bestBlock = null;
-  if (blocks.length === 1) {
-    bestBlock = blocks[0];
-  } else {
-    // Priority 1: match via data-mermaid-src (normalize line endings before comparing)
-    const srcCode = normalizeMermaidCode(mermaidEl?.dataset?.mermaidSrc);
-    if (srcCode) {
-      bestBlock = blocks.find(b => normalizeMermaidCode(b.code) === srcCode) || null;
-    }
-
-    // Priority 2: text-sample scoring (SVG text nodes vs source code)
-    if (!bestBlock) {
-      let bestScore = -1;
-      for (const block of blocks) {
-        const blockLower = block.code.toLowerCase();
-        let score = 0;
-        const pieMatches = [...block.code.matchAll(/"([^"]+)"/g)].map(x => x[1]);
-        for (const sample of svgTexts.slice(0, 8)) {
-          const sLower = sample.toLowerCase().replace(/[\d.%]+/g, '').trim();
-          if (sLower.length >= 2 && blockLower.includes(sLower)) score++;
-          if (pieMatches.some(pm => pm.toLowerCase() === sample.toLowerCase())) score += 3;
-        }
-        if (score > bestScore) { bestScore = score; bestBlock = block; }
-      }
-      if (bestScore < 1) {
-        showNotification('Could not uniquely identify mermaid block', 2000);
-        return;
-      }
-    }
-  }
-
-  if (!bestBlock) return;
 
   // Remove from DOM directly (no full re-render)
   const container = mermaidEl?.closest('.mermaid-container') || mermaidEl?.parentElement;
@@ -6876,9 +7205,8 @@ function deleteMermaidFromSource(svgTexts, mermaidEl) {
   originalMarkdown = isEditMode ? originalMarkdown : newContent;
   if (isEditMode) {
     markdownEditor.value = newContent;
-    hasUnsavedChanges = true;
-    updateUnsavedIndicator();
   }
+  setUnsavedChanges(true);
   invalidateTranslationCache();
   syncEditorWithStore();
   showNotification('Mermaid diagram deleted', 1500);
@@ -6959,9 +7287,8 @@ function deleteTableFromSource(tableEl, headers, cellTexts = []) {
   originalMarkdown = isEditMode ? originalMarkdown : newTableContent;
   if (isEditMode) {
     markdownEditor.value = newTableContent;
-    hasUnsavedChanges = true;
-    updateUnsavedIndicator();
   }
+  setUnsavedChanges(true);
   invalidateTranslationCache();
   syncEditorWithStore();
   showNotification('Table deleted', 1500);
@@ -6975,7 +7302,7 @@ function updateNewContextMenuItems() {
   if (!target) return;
 
   const isMermaid = !!(target.closest?.('.mermaid-container') || target.closest?.('.mermaid'));
-  const isTable = !!target.closest?.('table');
+  const isTable = !!target.closest?.('table:not(.front-matter)');
   const isCode = !!(target.closest?.('pre') || target.closest?.('code'));
   const isImg = target.tagName === 'IMG' || !!target.closest?.('img');
 
@@ -7322,33 +7649,26 @@ async function insertMermaidFromDialog() {
     if (!editTarget) return;
 
     const mermaidEl = editTarget.querySelector('.mermaid');
-    const oldCode = mermaidEl?.dataset?.mermaidSrc?.trim() || '';
     const content = isEditMode ? markdownEditor.value : originalMarkdown;
 
-    // Replace the matching mermaid block in source (normalize line endings for robust matching)
-    let newContent = content;
-    if (oldCode) {
-      const normalOld = normalizeMermaidCode(oldCode);
-      const mermaidBlockRegex = /```mermaid[^\S\r\n]*[\r\n]+([\s\S]*?)```/g;
-      let m;
-      while ((m = mermaidBlockRegex.exec(content)) !== null) {
-        if (normalizeMermaidCode(m[1]) === normalOld) {
-          newContent = content.substring(0, m.index) + '```mermaid\n' + code + '\n```' + content.substring(m.index + m[0].length);
-          break;
-        }
-      }
+    // Replace the body of the fence this diagram came from
+    const sourceBlock = mermaidEl ? findMermaidSourceBlock(content, mermaidEl) : null;
+    if (!sourceBlock) {
+      showNotification('Could not find mermaid block in source', 2000);
+      return;
     }
+    const newContent = replaceFencedBlockBody(content, sourceBlock, code);
 
     historyPush(isEditMode ? markdownEditor.value : originalMarkdown);
 
     if (isEditMode) {
       markdownEditor.value = newContent;
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
     } else {
       originalMarkdown = newContent;
       invalidateTranslationCache();
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
     }
     syncEditorWithStore();
 
@@ -7374,7 +7694,7 @@ async function insertMermaidFromDialog() {
       const newCursor = safePos + mermaidBlock.length;
       markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
       markdownEditor.focus();
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
       clearTimeout(previewDebounceTimer);
       previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
@@ -7389,7 +7709,7 @@ async function insertMermaidFromDialog() {
 
       originalMarkdown = newContent;
       invalidateTranslationCache();
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       syncEditorWithStore();
 
       await renderMermaidInDOM(code, 'insert');
@@ -7550,12 +7870,12 @@ function insertTableFromDialog() {
 
     if (isEditMode) {
       markdownEditor.value = newContent;
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
     } else {
       originalMarkdown = newContent;
       invalidateTranslationCache();
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
     }
     syncEditorWithStore();
 
@@ -7575,7 +7895,7 @@ function insertTableFromDialog() {
       const newCursor = safePos + md.length + 2;
       markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
       markdownEditor.focus();
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
       clearTimeout(previewDebounceTimer);
       previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
@@ -7590,7 +7910,7 @@ function insertTableFromDialog() {
 
       originalMarkdown = newContent;
       invalidateTranslationCache();
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       syncEditorWithStore();
 
       renderTableInDOM(md, 'insert');
@@ -7638,7 +7958,7 @@ function insertContentAtCursor(content) {
     const newCursor = safePos + content.length;
     markdownEditor.selectionStart = markdownEditor.selectionEnd = newCursor;
     markdownEditor.focus();
-    hasUnsavedChanges = true;
+    setUnsavedChanges(true);
     updateUnsavedIndicator();
     clearTimeout(previewDebounceTimer);
     previewDebounceTimer = setTimeout(() => renderMarkdown(markdownEditor.value), TIMING.previewDebounceDelay);
@@ -7860,7 +8180,7 @@ ctxNotesPanelDelete.addEventListener('click', () => {
         replacement +
         editorVal.substring(match.index + match[0].length);
 
-      hasUnsavedChanges = true;
+      setUnsavedChanges(true);
       updateUnsavedIndicator();
 
       clearTimeout(previewDebounceTimer);
@@ -7945,16 +8265,19 @@ ctxNotesPanelDelete.addEventListener('click', () => {
   } catch (e) {}
 })();
 
-// Auto-resize @@@html iframes when their content reports height
+// Auto-resize @@@html iframes when their content reports height. The sandboxed
+// frame can only post messages; it is identified by its window, so a frame can
+// resize only itself.
 window.addEventListener('message', function(e) {
   if (!e.data || e.data.type !== 'omnicore-rawhtml-resize') return;
-  const iframe = viewer.querySelector(`iframe[data-rawhtml-idx="${e.data.idx}"]`);
-  if (iframe && e.data.h > 0) {
-    iframe.style.height = e.data.h + 'px';
+  const iframe = Array.from(viewer.querySelectorAll('iframe.raw-html-block')).find(f => f.contentWindow === e.source);
+  const h = Number(e.data.h);
+  if (iframe && h > 0) {
+    iframe.style.height = h + 'px';
     const zoom = parseFloat(iframe.dataset.rawhtmlZoom) || 1;
     if (zoom !== 1) {
       const wrapper = iframe.closest('.raw-html-wrapper');
-      if (wrapper) wrapper.style.height = Math.ceil(e.data.h * zoom) + 'px';
+      if (wrapper) wrapper.style.height = Math.ceil(h * zoom) + 'px';
     }
   }
 });

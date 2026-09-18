@@ -299,14 +299,15 @@ function getArtifacts(version) {
 
   if (dryRun) {
     // Show expected artifacts in dry-run mode
+    // Names come from package.json build.*.artifactName (no spaces, so GitHub
+    // keeps them as-is and latest*.yml URLs resolve)
     const expectedArtifacts = [
       `Omnicore-Markdown-Viewer-Setup-${version}.exe`,
-      `Omnicore Markdown Viewer Setup ${version}.exe`,
-      `Omnicore.Markdown.Viewer-${version}.AppImage`,
+      `Omnicore-Markdown-Viewer-Setup-${version}.exe.blockmap`,
+      `Omnicore-Markdown-Viewer-${version}.AppImage`,
       `omnicore-markdown-viewer_${version}_amd64.deb`,
       'latest.yml',
-      'latest-linux.yml',
-      `Omnicore-Markdown-Viewer-Setup-${version}.exe.blockmap`
+      'latest-linux.yml'
     ];
     logDryRun('Expected artifacts:');
     expectedArtifacts.forEach(a => logDryRun(`  - ${a}`));
@@ -325,8 +326,11 @@ function getArtifacts(version) {
   // Find relevant files
   const patterns = [
     /Setup.*\.exe$/i,
+    /-portable\.exe$/i,
     /\.AppImage$/i,
     /\.deb$/i,
+    /\.dmg$/i,
+    /-mac\.zip$/i,
     /^latest.*\.yml$/i,
     /\.blockmap$/i
   ];
@@ -353,22 +357,6 @@ function getArtifacts(version) {
   return artifacts;
 }
 
-function renameWindowsInstaller(version) {
-  // Rename installer to use dashes (required for auto-update)
-  const spaceName = path.join(DIST_DIR, `Omnicore Markdown Viewer Setup ${version}.exe`);
-  const dashName = path.join(DIST_DIR, `Omnicore-Markdown-Viewer-Setup-${version}.exe`);
-
-  if (dryRun) {
-    logDryRun(`Would copy installer with dashes: Omnicore-Markdown-Viewer-Setup-${version}.exe`);
-    return;
-  }
-
-  if (fs.existsSync(spaceName) && !fs.existsSync(dashName)) {
-    fs.copyFileSync(spaceName, dashName);
-    logSuccess(`Created: Omnicore-Markdown-Viewer-Setup-${version}.exe`);
-  }
-}
-
 function createGitHubRelease(version, artifacts) {
   logStep(5, 'Creating GitHub release');
 
@@ -379,8 +367,9 @@ function createGitHubRelease(version, artifacts) {
   const releaseNotes = `## Omnicore Markdown Viewer v${version}
 
 ### Downloads
-- **Windows**: Download \`Omnicore-Markdown-Viewer-Setup-${version}.exe\`
-- **Linux AppImage**: Download \`Omnicore.Markdown.Viewer-${version}.AppImage\`
+- **Windows installer**: Download \`Omnicore-Markdown-Viewer-Setup-${version}.exe\`
+- **Windows portable**: Download \`Omnicore-Markdown-Viewer-${version}-portable.exe\`
+- **Linux AppImage**: Download \`Omnicore-Markdown-Viewer-${version}.AppImage\`
 - **Linux DEB**: Download \`omnicore-markdown-viewer_${version}_amd64.deb\`
 
 ### Auto-Update
@@ -479,9 +468,6 @@ async function main() {
   if (!skipBuild) {
     buildWindows();
     buildLinux();
-
-    // Rename Windows installer for auto-update compatibility
-    renameWindowsInstaller(version);
   } else {
     logInfo('Skipping build (--skip-build flag)');
   }

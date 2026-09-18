@@ -51,8 +51,8 @@ build-windows.bat
 
 After building, you'll find in the `dist/` folder:
 
-- `Omnicore.Markdown.Viewer.2.0.4.exe` - Portable version
-- `Omnicore.Markdown.Viewer.Setup.2.0.4.exe` - Installer version
+- `Omnicore-Markdown-Viewer-X.Y.Z-portable.exe` - Portable version
+- `Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe` - Installer version
 
 ## First-Time Build
 
@@ -66,7 +66,7 @@ npm install
 npm run build-installer
 
 # 3. Test the installer
-# Run: dist\Omnicore.Markdown.Viewer.Setup.2.0.4.exe
+# Run: dist\Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe
 ```
 
 ## Installer Features

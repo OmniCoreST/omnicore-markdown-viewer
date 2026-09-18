@@ -75,9 +75,8 @@ npm run release -- --dry-run --skip-build 1.7.0
 4. **Commits version bump** - Creates git commit and pushes
 5. **Builds Windows** - Creates NSIS installer (.exe)
 6. **Builds Linux** - Creates AppImage and .deb packages
-7. **Renames installer** - Creates dash-named installer for auto-update compatibility
-8. **Collects artifacts** - Gathers all release files from dist/
-9. **Creates GitHub release** - Uploads all artifacts with release notes
+7. **Collects artifacts** - Gathers all release files from dist/ (artifact names contain no spaces — set in `package.json` `build.*.artifactName` — so GitHub keeps them and the `latest*.yml` URLs resolve)
+8. **Creates GitHub release** - Uploads all artifacts with release notes
 
 ## Build Artifacts
 
@@ -86,11 +85,13 @@ The following files are included in each release:
 | File | Platform | Description |
 |------|----------|-------------|
 | `Omnicore-Markdown-Viewer-Setup-X.X.X.exe` | Windows | NSIS installer |
-| `Omnicore.Markdown.Viewer-X.X.X.AppImage` | Linux | Portable AppImage |
+| `Omnicore-Markdown-Viewer-X.X.X-portable.exe` | Windows | Portable build (`npm run build-all`) |
+| `Omnicore-Markdown-Viewer-X.X.X.AppImage` | Linux | Portable AppImage |
 | `omnicore-markdown-viewer_X.X.X_amd64.deb` | Linux | Debian package |
 | `latest.yml` | Windows | Auto-update manifest |
 | `latest-linux.yml` | Linux | Auto-update manifest |
 | `*.blockmap` | Windows | Delta update support |
+| `Omnicore-Markdown-Viewer-X.X.X-<arch>.dmg`, `…-<arch>-mac.zip`, `latest-mac.yml` | macOS | Built by CI (`npm run build-mac`); the zip is what auto-update downloads |
 
 ## Platform Notes
 

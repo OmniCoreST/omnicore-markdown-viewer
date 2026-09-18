@@ -6,10 +6,11 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { exec } = require('child_process');
+const { fileURLToPath } = require('url');
 const HTMLtoDOCX = require('html-to-docx');
 
 // Helper modules
-const { isMermaidFile, isTscircuitFile, wrapMermaidContent, removeBOM, readMarkdownFile, sendIPCResult } = require('./file-helpers');
+const { isMermaidFile, isOmniWareFile, isTscircuitFile, wrapMermaidContent, removeBOM, readMarkdownFile, sendIPCResult } = require('./file-helpers');
 
 // ============================================
 // CONDITIONAL IMPORTS
@@ -51,6 +52,13 @@ log('Log file:', logFilePath);
 // ============================================
 let mainWindow = null;
 let fileToOpen = null;
+
+// Unsaved-changes guard: the renderer reports its dirty state; closing the window
+// (X button, Ctrl+Q, app.quit) first asks the renderer to Save / Discard / Cancel.
+let rendererHasUnsavedChanges = false;
+let allowWindowClose = false;
+let closePromptPending = false;
+let quitRequested = false;
 
 // File watching state
 let fileWatcher = null;
@@ -104,6 +112,32 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // Ask before closing with unsaved changes (window X, Ctrl+Q, app.quit())
+  allowWindowClose = false;
+  rendererHasUnsavedChanges = false;
+  mainWindow.on('close', (event) => {
+    if (allowWindowClose || !rendererHasUnsavedChanges) return;
+    event.preventDefault();
+    if (closePromptPending) return;
+    closePromptPending = true;
+    mainWindow.webContents.send('close-requested');
+  });
+  mainWindow.webContents.on('render-process-gone', () => {
+    rendererHasUnsavedChanges = false;
+    closePromptPending = false;
+  });
+
+  // The app window only ever shows index.html: links that would navigate it
+  // (e.g. inside SVG diagrams) or open new windows go to the system browser.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault();
+    if (/^https?:/i.test(url)) shell.openExternal(url);
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?:|mailto:)/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   // Check for file changes when window regains focus
   mainWindow.on('focus', () => {
     if (watchedFilePath) {
@@ -115,9 +149,11 @@ function createWindow() {
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.control || input.meta) {
       if (input.key === 'o' && input.type === 'keyDown' && !input.shift) {
+        // Ctrl+O → renderer checks unsaved changes, then asks for the Open dialog
         event.preventDefault();
-        openFileDialog();
+        mainWindow.webContents.send('shortcut-open-file');
       } else if (input.key === 'q' && input.type === 'keyDown') {
+        // Quit goes through the window 'close' guard (unsaved changes prompt)
         event.preventDefault();
         app.quit();
       } else if (input.key === 'O' && input.type === 'keyDown' && input.shift) {
@@ -411,6 +447,48 @@ ipcMain.on('open-folder-in-explorer', (event, filePath) => {
 });
 
 // ============================================
+// IPC HANDLERS - Unsaved changes
+// ============================================
+
+ipcMain.on('unsaved-changes-state', (event, dirty) => {
+  rendererHasUnsavedChanges = !!dirty;
+});
+
+// Save / Don't Save / Cancel → 'save' | 'discard' | 'cancel'
+ipcMain.handle('confirm-unsaved-changes', async (event, opts = {}) => {
+  const buttons = Array.isArray(opts.buttons) && opts.buttons.length === 3 ? opts.buttons : ['Save', "Don't Save", 'Cancel'];
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons,
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: opts.message || 'Do you want to save your changes?',
+    detail: opts.detail || ''
+  });
+  return ['save', 'discard', 'cancel'][response] || 'cancel';
+});
+
+// Renderer's answer to 'close-requested'
+ipcMain.on('close-request-result', (event, proceed) => {
+  closePromptPending = false;
+  if (!proceed) {
+    quitRequested = false;
+    return;
+  }
+  allowWindowClose = true;
+  if (quitRequested) {
+    app.quit();
+  } else if (mainWindow) {
+    mainWindow.close();
+  }
+});
+
+app.on('before-quit', () => {
+  quitRequested = true;
+});
+
+// ============================================
 // IPC HANDLERS - Export
 // ============================================
 
@@ -435,6 +513,51 @@ function openFileAfterExport(filePath) {
       if (errMsg) shell.showItemInFolder(filePath);
     });
   }
+}
+
+// printToPDF (Chromium 118) writes no /Title into the PDF. Add one with a PDF
+// incremental update: a new Info object and xref section are appended, the bytes
+// Chromium wrote stay untouched. Any surprise → the original buffer is returned.
+function withPdfTitle(pdfData, title) {
+  try {
+    if (!title) return pdfData;
+    const tail = pdfData.slice(Math.max(0, pdfData.length - 4096)).toString('latin1');
+    const startxref = /startxref\s+(\d+)\s+%%EOF\s*$/.exec(tail);
+    const trailers = tail.match(/trailer\s*<<[\s\S]*?>>\s*startxref/g);
+    if (!startxref || !trailers) return pdfData;
+    const trailer = trailers[trailers.length - 1];
+    const size = /\/Size\s+(\d+)/.exec(trailer);
+    const root = /\/Root\s+(\d+\s+\d+\s+R)/.exec(trailer);
+    if (!size || !root) return pdfData;
+
+    // Keep the existing Info entries (Creator, Producer, dates)
+    let infoEntries = '';
+    const infoRef = /\/Info\s+(\d+)\s+(\d+)\s+R/.exec(trailer);
+    if (infoRef) {
+      const info = new RegExp('(?:^|[\\r\\n])' + infoRef[1] + '\\s+' + infoRef[2] + '\\s+obj\\s*<<([\\s\\S]*?)>>\\s*endobj')
+        .exec(pdfData.toString('latin1'));
+      if (info) infoEntries = info[1].replace(/\/Title\s*(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>)/, '').trim();
+    }
+
+    const objNum = Number(size[1]);
+    const titleHex = Buffer.from('\ufeff' + title, 'utf16le').swap16().toString('hex').toUpperCase(); // UTF-16BE
+    const lead = pdfData[pdfData.length - 1] === 0x0a ? '' : '\n';
+    const objOffset = pdfData.length + lead.length;
+    const obj = `${objNum} 0 obj\n<<${infoEntries ? infoEntries + '\n' : ''}/Title <${titleHex}>>>\nendobj\n`;
+    const xrefOffset = objOffset + Buffer.byteLength(obj, 'latin1');
+    const xref = 'xref\n0 1\n0000000000 65535 f \n' +
+      `${objNum} 1\n${String(objOffset).padStart(10, '0')} 00000 n \n` +
+      `trailer\n<</Size ${objNum + 1}\n/Root ${root[1]}\n/Info ${objNum} 0 R\n/Prev ${startxref[1]}>>\n` +
+      `startxref\n${xrefOffset}\n%%EOF\n`;
+    return Buffer.concat([pdfData, Buffer.from(lead + obj + xref, 'latin1')]);
+  } catch (e) {
+    log('withPdfTitle failed:', e.message);
+    return pdfData;
+  }
+}
+
+function pdfTitleFromFileName(fileName) {
+  return (fileName || '').replace(/\.[^/.]+$/, '');
 }
 
 // Build corporate letterhead header/footer templates for printToPDF
@@ -496,7 +619,7 @@ ipcMain.on('export-pdf-corporate', async (event, data) => {
     // Build corporate letterhead templates (header/footer appear on every page via Chromium)
     const { headerTemplate, footerTemplate } = buildCorporateTemplates(currentFileName);
 
-    const pdfData = await mainWindow.webContents.printToPDF({
+    const pdfData = withPdfTitle(await mainWindow.webContents.printToPDF({
       printBackground: true,
       landscape: false,
       pageSize: 'A4',
@@ -504,7 +627,7 @@ ipcMain.on('export-pdf-corporate', async (event, data) => {
       headerTemplate,
       footerTemplate,
       margins: { top: 1.2, bottom: 1.0, left: 0.8, right: 0.8 }
-    });
+    }), pdfTitleFromFileName(currentFileName));
 
     fs.writeFile(result.filePath, pdfData, (err) => {
       if (err) {
@@ -549,13 +672,13 @@ ipcMain.on('export-pdf', async (event, data) => {
     await new Promise(resolve => ipcMain.once('pdf-export-ready', resolve));
 
     // Generate PDF from current page
-    const pdfData = await mainWindow.webContents.printToPDF({
+    const pdfData = withPdfTitle(await mainWindow.webContents.printToPDF({
       printBackground: true,
       landscape: false,
       marginsType: 1, // Minimum margins
       pageSize: 'A4',
       preferCSSPageSize: false
-    });
+    }), pdfTitleFromFileName(currentFileName));
 
     // Write PDF to file
     fs.writeFile(result.filePath, pdfData, (err) => {
@@ -821,10 +944,9 @@ ipcMain.on('export-html', async (event, data) => {
     (images || []).forEach(({ token, originalSrc }) => {
       let resolved = originalSrc;
       try {
-        // Strip file:// prefix if present
-        if (resolved.startsWith('file://')) {
-          resolved = decodeURI(resolved.replace(/^file:\/\/\/?/, ''));
-          if (process.platform !== 'win32' && !resolved.startsWith('/')) resolved = '/' + resolved;
+        // file:// URL → filesystem path
+        if (resolved.startsWith('file:')) {
+          resolved = fileURLToPath(resolved);
         }
         // Resolve relative paths against the source markdown directory
         if (!path.isAbsolute(resolved)) {
@@ -910,10 +1032,26 @@ ${processedHtml}
   }
 });
 
+// .mmd / .ow / .circuit.tsx files are shown wrapped in a fence (file-helpers.js);
+// write the bare source back unless the file on disk was fenced itself.
+function unwrapDiagramFileContent(filePath, content) {
+  const kind = isMermaidFile(filePath) ? 'mermaid'
+    : isOmniWareFile(filePath) ? 'omniware'
+      : isTscircuitFile(filePath) ? 'tscircuit' : null;
+  if (!kind) return content;
+  let onDisk = '';
+  try { onDisk = removeBOM(fs.readFileSync(filePath, 'utf8')).trim(); } catch (e) { /* new file */ }
+  if (onDisk.startsWith('```') || onDisk.startsWith('~~~')) return content;
+  const match = new RegExp('^```' + kind + '\\r?\\n([\\s\\S]*?)\\r?\\n```[ \\t]*\\r?\\n?$').exec(content);
+  if (!match || /\r?\n```/.test(match[1])) return content;
+  return match[1];
+}
+
 // Handle markdown file save request from renderer
 ipcMain.on('save-markdown-file', (event, data) => {
   try {
-    const { filePath, content } = data;
+    const { filePath } = data;
+    const content = filePath ? unwrapDiagramFileContent(filePath, data.content) : data.content;
 
     if (!filePath) {
       mainWindow.webContents.send('save-markdown-result', {
@@ -1977,7 +2115,10 @@ ipcMain.on('open-omniware-popup', (event, data) => {
   const { getOmniWareDarkCSS } = require('./omniware-config');
   const darkCSS = isDarkMode ? `<style>${getOmniWareDarkCSS(true)}</style>` : '';
 
-  const escapedDsl = dslCode.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  // DSL as a JS string literal; "<" escaped so a "</script>" inside it cannot end the script
+  const dslLiteral = JSON.stringify(String(dslCode || ''))
+    .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+  const purifyJs = fs.readFileSync(path.join(__dirname, 'libs', 'dompurify', 'purify.min.js'), 'utf8');
 
   const tempHtmlPath = path.join(os.tmpdir(), 'omnicore-temp-omniware.html');
   const htmlContent = `<!DOCTYPE html>
@@ -2023,11 +2164,16 @@ ipcMain.on('open-omniware-popup', (event, data) => {
     <div id="render-target"></div>
 
     <script>${omniwareJs}</script>
+    <script>${purifyJs}</script>
     <script>
         const { ipcRenderer } = require('electron');
 
-        const dsl = \`${escapedDsl}\`;
-        OmniWare.render(dsl, document.getElementById('render-target'));
+        const dsl = ${dslLiteral};
+        // OmniWare passes raw HTML through in some contexts and this window has Node
+        // access: inject the stylesheet, then insert the sanitised markup.
+        OmniWare.render('', document.createElement('div'));
+        document.getElementById('render-target').innerHTML =
+          DOMPurify.sanitize(OmniWare.toHTML(dsl), { ADD_ATTR: ['style', 'class'] });
 
         function exportPDF() {
             ipcRenderer.send('omniware-export-pdf');
@@ -2718,6 +2864,21 @@ function handleFileArgument(argv) {
 // Check for file argument on first launch
 log('Initial process.argv:', process.argv);
 handleFileArgument(process.argv);
+
+// macOS: Finder double-click / `open -a` deliver files through 'open-file'
+// (can fire before the app is ready). Queue it until the window has loaded.
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  log('open-file event:', filePath);
+  if (mainWindow && !mainWindow.webContents.isLoading()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.webContents.send('external-file-open-request', { filePath });
+  } else {
+    fileToOpen = filePath; // opened in did-finish-load
+    if (!mainWindow && app.isReady()) createWindow();
+  }
+});
 
 ipcMain.on('request-open-file', (event, data) => {
   const { filePath } = data;

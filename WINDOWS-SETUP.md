@@ -24,7 +24,7 @@ A standalone executable that doesn't require installation. Users can run it dire
 npm run build
 ```
 
-**Output**: `dist/Omnicore.Markdown.Viewer.2.0.4.exe`
+**Output**: `dist/Omnicore-Markdown-Viewer-X.Y.Z-portable.exe`
 
 **Features**:
 - No installation required
@@ -39,7 +39,7 @@ A traditional Windows installer that installs the application to Program Files.
 npm run build-installer
 ```
 
-**Output**: `dist/Omnicore.Markdown.Viewer.Setup.2.0.4.exe`
+**Output**: `dist/Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe`
 
 **Features**:
 - Professional installer with wizard
@@ -90,12 +90,12 @@ Users can right-click these files and choose "Open with Omnicore Markdown Viewer
 ### For End Users
 
 **Portable Version**:
-1. Download `Omnicore.Markdown.Viewer.2.0.4.exe`
+1. Download `Omnicore-Markdown-Viewer-X.Y.Z-portable.exe`
 2. Run the executable directly
 3. No installation needed
 
 **Installer Version**:
-1. Download `Omnicore.Markdown.Viewer.Setup.2.0.4.exe`
+1. Download `Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe`
 2. Double-click to start installation wizard
 3. Follow the installation steps
 4. Application will be available in Start Menu and Desktop (if selected)
@@ -105,7 +105,7 @@ Users can right-click these files and choose "Open with Omnicore Markdown Viewer
 **Testing Installer Locally**:
 1. Build the installer: `npm run build-installer`
 2. Navigate to `dist/` folder
-3. Run `Omnicore.Markdown.Viewer.Setup.2.0.4.exe`
+3. Run `Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe`
 4. Complete installation
 5. Test file associations by opening .md files
 6. Test uninstallation from Add/Remove Programs
@@ -213,12 +213,12 @@ npm run build-installer
 
 Users can install silently (for enterprise deployment):
 ```bash
-Omnicore.Markdown.Viewer.Setup.2.0.4.exe /S
+Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe /S
 ```
 
 ### Custom Install Directory (Silent)
 ```bash
-Omnicore.Markdown.Viewer.Setup.2.0.4.exe /S /D=C:\CustomPath
+Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe /S /D=C:\CustomPath
 ```
 
 ### Uninstall Silently
