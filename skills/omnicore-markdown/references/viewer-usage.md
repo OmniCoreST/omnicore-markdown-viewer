@@ -46,7 +46,7 @@ Read this when the user asks how to do something in the viewer, wants a document
   - `omnicore-markdown-viewer_X.Y.Z_amd64.deb`
   - `Omnicore-Markdown-Viewer-X.Y.Z.AppImage`
   - `Omnicore-Markdown-Viewer-X.Y.Z-arm64.dmg` (plus a `-mac.zip` for auto-update)
-- **Ubuntu:** use the `.deb`. On Ubuntu 24.04+ the AppImage needs `--no-sandbox` (AppArmor) and libfuse2.
+- **Ubuntu:** use the `.deb` (≥ 2.3.1). It installs an AppArmor profile (`/etc/apparmor.d/omnicore-markdown-viewer`). Without it, Ubuntu 24.04+ blocks the Chromium sandbox and the app does not open from the menu; 2.3.0 and older have this problem. The AppImage needs `--no-sandbox` and libfuse2.
   ```bash
   gh release download -R OmniCoreST/omnicore-markdown-viewer -p '*_amd64.deb'
   sudo apt install ./omnicore-markdown-viewer_*_amd64.deb

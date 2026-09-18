@@ -1,6 +1,6 @@
 {
   "name": "omnicore-markdown-viewer",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Omnicore Markdown Viewer - A sleek cross-platform markdown viewer with Mermaid support",
   "main": "main.js",
   "scripts": {
@@ -192,6 +192,10 @@
     "appImage": {
       "artifactName": "Omnicore-Markdown-Viewer-${version}.${ext}"
     },
+    "deb": {
+      "afterInstall": "assets/linux/after-install.sh",
+      "afterRemove": "assets/linux/after-remove.sh"
+    },
     "linux": {
       "target": [
         "deb",
@@ -199,7 +203,7 @@
       ],
       "category": "Utility",
       "maintainer": "Omnicore <info@omnicore.com.tr>",
-      "icon": "omnicore_ico.png",
+      "icon": "assets/linux/icons",
       "fileAssociations": [
         {
           "ext": "md",
