@@ -332,6 +332,7 @@ The same viewer is available inside VS Code (`vscode-extension/`). It becomes th
 - **Install:** download `omnicore-markdown-viewer-X.Y.Z.vsix` from the [Releases page](https://github.com/OmniCoreST/omnicore-markdown-viewer/releases), then run `code --install-extension omnicore-markdown-viewer-X.Y.Z.vsix` (or *Extensions → … → Install from VSIX*). Install a newer VSIX the same way to update.
 - **Edit:** the viewer is read-only; use **Omnicore: Open as Text** (editor title icon) or *Reopen Editor With… → Text Editor*. The viewer follows changes to the file and keeps its scroll position.
 - **Side preview:** `Ctrl+Shift+V` / `Ctrl+K V` from a Markdown text editor.
+- **Open in the desktop app:** right-click a Markdown file in the Explorer or its tab → **Open in Omnicore Desktop App** (the app is found automatically; setting `omnicore.desktopApp.path` otherwise).
 - **Export:** the toolbar's PDF button prints with a locally installed Chrome, Edge or Chromium (set `omnicore.pdf.browserPath` if none is found); DOCX embeds images and Mermaid diagrams.
 - **Desktop-only:** D2, tscircuit, notes, image sliders, `@@@html` blocks, translation and the letterhead.
 

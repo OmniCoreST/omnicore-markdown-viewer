@@ -19,6 +19,9 @@ Read this when the user asks how to do something in the viewer, wants a document
   - To edit, use **Omnicore: Open as Text** (editor title icon) or *Reopen Editor With… → Text Editor*.
   - When the file changes (typing, or another tool writing it), the viewer re-renders after 200 ms and keeps its scroll position.
 - **Side preview:** from a Markdown text editor, `Ctrl+Shift+V` (preview) or `Ctrl+K V` (to the side).
+- **Open in the desktop app** (≥ 1.3.0): right-click a Markdown file in the Explorer or its editor tab → *Open in Omnicore Desktop App*. It is also in the viewer's "…" menu and the command palette.
+  - The app is found on `PATH`, in `/opt/Omnicore Markdown Viewer`, Program Files or `/Applications`, or at the path set in `omnicore.desktopApp.path`.
+  - Unsaved changes are offered to be saved first.
 - **Toolbar:**
   - zoom (`-` / `100%` / `+`, Ctrl `+`/`-`/`0`, Ctrl+wheel);
   - search (Ctrl+F);

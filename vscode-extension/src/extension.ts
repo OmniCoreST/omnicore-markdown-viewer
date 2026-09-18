@@ -5,6 +5,7 @@ import { RecentFilesProvider, RecentFileItem } from './recentFilesProvider.js';
 import { registerFormattingCommands } from './formattingCommands.js';
 import { ExportFormat, MarkdownEditorProvider } from './markdownEditorProvider.js';
 import { isMarkdownFile } from './fileHelpers.js';
+import { findDesktopApp, launchDesktopApp, RELEASES_URL } from './desktopApp.js';
 
 let previewManager: PreviewManager | undefined;
 
@@ -62,6 +63,43 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     vscode.window.showWarningMessage('Open a Markdown file in the Omnicore viewer to export it.');
   };
+
+  // Open the file in the Omnicore desktop app (explorer / tab context menu, palette)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('omnicore.openInDesktopApp', async (uri?: vscode.Uri) => {
+      const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      const target = uri instanceof vscode.Uri ? uri
+        : input instanceof vscode.TabInputCustom || input instanceof vscode.TabInputText ? input.uri
+        : undefined;
+      if (!target || target.scheme !== 'file') {
+        vscode.window.showWarningMessage('Select a Markdown file on disk to open it in the desktop app.');
+        return;
+      }
+      const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === target.toString());
+      if (doc?.isDirty) {
+        const choice = await vscode.window.showWarningMessage(
+          `${vscode.workspace.asRelativePath(target)} has unsaved changes. The desktop app shows the saved file.`,
+          'Save and Open', 'Open Saved Version');
+        if (!choice) return;
+        if (choice === 'Save and Open' && !(await doc.save())) return;
+      }
+      const configured = vscode.workspace.getConfiguration('omnicore').get<string>('desktopApp.path');
+      const app = findDesktopApp(configured);
+      if (!app) {
+        const choice = await vscode.window.showErrorMessage(
+          configured ? `Omnicore desktop app not found at ${configured}.` : 'Omnicore Markdown Viewer desktop app is not installed.',
+          'Download', 'Set Path');
+        if (choice === 'Download') vscode.env.openExternal(vscode.Uri.parse(RELEASES_URL));
+        if (choice === 'Set Path') vscode.commands.executeCommand('workbench.action.openSettings', 'omnicore.desktopApp.path');
+        return;
+      }
+      try {
+        await launchDesktopApp(app, target.fsPath);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Could not start the Omnicore desktop app: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('omnicore.exportPdf', () => exportActive('pdf')),

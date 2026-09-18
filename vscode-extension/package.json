@@ -2,7 +2,7 @@
   "name": "omnicore-markdown-viewer",
   "displayName": "Omnicore Markdown Viewer",
   "description": "Rich markdown preview with Mermaid diagrams, OmniWare wireframes, interactive tables (Tabulator.js), and PrismJS syntax highlighting",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "omnicore",
   "license": "MIT",
   "repository": {
@@ -38,6 +38,12 @@
       }
     ],
     "commands": [
+      {
+        "command": "omnicore.openInDesktopApp",
+        "title": "Open in Omnicore Desktop App",
+        "category": "Omnicore",
+        "icon": "$(link-external)"
+      },
       {
         "command": "omnicore.openAsText",
         "title": "Omnicore: Open as Text",
@@ -101,7 +107,32 @@
       }
     ],
     "menus": {
+      "explorer/context": [
+        {
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(md|markdown|mdown|mkd|mkdn|mmd|mermaid|ow)$/i",
+          "command": "omnicore.openInDesktopApp",
+          "group": "navigation@90"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(md|markdown|mdown|mkd|mkdn|mmd|mermaid|ow)$/i",
+          "command": "omnicore.openInDesktopApp",
+          "group": "1_open@90"
+        }
+      ],
+      "commandPalette": [
+        {
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(md|markdown|mdown|mkd|mkdn|mmd|mermaid|ow)$/i",
+          "command": "omnicore.openInDesktopApp"
+        }
+      ],
       "editor/title": [
+        {
+          "when": "activeCustomEditorId == omnicore.markdownEditor",
+          "command": "omnicore.openInDesktopApp",
+          "group": "1_omnicore@1"
+        },
         {
           "when": "activeCustomEditorId == omnicore.markdownEditor",
           "command": "omnicore.openAsText",
@@ -170,6 +201,12 @@
     "configuration": {
       "title": "Omnicore Markdown Viewer",
       "properties": {
+        "omnicore.desktopApp.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Path to the Omnicore Markdown Viewer desktop app used by **Open in Omnicore Desktop App**. Empty: found automatically (`omnicore-markdown-viewer` on `PATH`, `/opt/Omnicore Markdown Viewer`, Program Files, `/Applications`)."
+        },
         "omnicore.pdf.browserPath": {
           "type": "string",
           "default": "",
