@@ -2,7 +2,7 @@
   "name": "omnicore-markdown-viewer",
   "displayName": "Omnicore Markdown Viewer",
   "description": "Rich markdown preview with Mermaid diagrams, OmniWare wireframes, interactive tables (Tabulator.js), and PrismJS syntax highlighting",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "omnicore",
   "license": "MIT",
   "repository": {
@@ -23,7 +23,26 @@
     "onCommand:omnicore.openPreviewToSide"
   ],
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "omnicore.markdownEditor",
+        "displayName": "Omnicore Markdown Viewer",
+        "selector": [
+          { "filenamePattern": "*.md" },
+          { "filenamePattern": "*.markdown" },
+          { "filenamePattern": "*.mmd" },
+          { "filenamePattern": "*.mermaid" },
+          { "filenamePattern": "*.ow" }
+        ],
+        "priority": "default"
+      }
+    ],
     "commands": [
+      {
+        "command": "omnicore.openAsText",
+        "title": "Omnicore: Open as Text",
+        "icon": "$(go-to-file)"
+      },
       {
         "command": "omnicore.openPreview",
         "title": "Omnicore: Open Preview",
@@ -83,6 +102,11 @@
     ],
     "menus": {
       "editor/title": [
+        {
+          "when": "activeCustomEditorId == omnicore.markdownEditor",
+          "command": "omnicore.openAsText",
+          "group": "navigation"
+        },
         {
           "when": "resourceLangId == markdown || resourceExtname == .mmd || resourceExtname == .mermaid || resourceExtname == .ow",
           "command": "omnicore.openPreviewToSide",

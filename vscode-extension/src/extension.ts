@@ -3,6 +3,7 @@ import { PreviewManager } from './previewManager.js';
 import { ExportService } from './exportService.js';
 import { RecentFilesProvider, RecentFileItem } from './recentFilesProvider.js';
 import { registerFormattingCommands } from './formattingCommands.js';
+import { MarkdownEditorProvider } from './markdownEditorProvider.js';
 
 let previewManager: PreviewManager | undefined;
 
@@ -22,6 +23,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('omnicore.openPreviewToSide', () => {
       previewManager?.openPreview(vscode.ViewColumn.Beside);
+    })
+  );
+
+  // Viewer as default editor for supported files
+  context.subscriptions.push(
+    MarkdownEditorProvider.register(context, exportService, recentFilesProvider),
+    vscode.commands.registerCommand('omnicore.openAsText', (uri?: vscode.Uri) => {
+      const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+      const target = uri ?? (input instanceof vscode.TabInputCustom ? input.uri : undefined);
+      if (target) {
+        vscode.commands.executeCommand('vscode.openWith', target, 'default');
+      }
     })
   );
 
