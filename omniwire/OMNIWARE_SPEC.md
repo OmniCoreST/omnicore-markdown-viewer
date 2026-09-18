@@ -10,7 +10,7 @@ that can be embedded in markdown code blocks — exactly like Mermaid for flowch
 - Text-based DSL readable by non-developers (VEDAŞ stakeholders)
 - Consistent sketch/blueprint wireframe aesthetic across all screens
 - SRS traceability — every component can carry `ref:` codes
-- Embeddable in any markdown viewer via ```` ```wireframe ```` code blocks
+- Embeddable in any markdown viewer via ```` ```omniware ```` code blocks (```` ```wireframe ```` is accepted as an alias since viewer 2.3.0 / VS Code extension 1.2.0; `.ow` files contain the raw DSL without a fence)
 
 ---
 
@@ -21,25 +21,28 @@ that can be embedded in markdown code blocks — exactly like Mermaid for flowch
 | Rule | Description |
 |---|---|
 | Line-based | Each line is a statement |
-| Indentation | 2-space indent = child of previous block component |
-| `@keyword` | Block components (section, table, etc.) |
-| `key: value` | Properties and key-value pairs |
+| Indentation | 2-space indent = child of the nearest previous line with a smaller indent. Everything after `@page` must be indented under it, otherwise it renders outside the page frame. A line indented under a plain content line is dropped |
+| `@keyword` | Block components (section, table, etc.), lowercase |
+| `"Title"` | Quoted block title — always quote it (an unquoted title loses any `x:y` part such as `14:00`) |
+| `key:value` | Header properties on the `@keyword` line, **no space after the colon**; quote values with spaces: `ref:"A, B"`. `key="value"` is not syntax |
 | `**text**` | Bold text |
-| `*item*` | Active/selected item in lists |
-| `(CODE)` | SRS reference code badge |
-| `[Button Text]` | Button |
-| `{color}` | Color tag: `{green}`, `{red}`, `{yellow}`, `{blue}`, `{gray}` |
-| `---` | Horizontal divider |
-| `//` | Comment (not rendered) |
-| `|` | Column separator in tables, grids, nav items |
+| `*item*` | Active/selected item in nav, tabs and radio items |
+| `(CODE)` | SRS reference chip — any `(` + ASCII uppercase text + `)`, e.g. `(FR-001)` |
+| `[Button Text]` | Inline button (in `@buttons` use `[primary] Label`) |
+| `{color}Text` | Color tag: `{green}`, `{red}`, `{yellow}`, `{blue}`, `{gray}` — no space after `}`; the tag runs until two spaces, `\|` or end of line, so put it last |
+| `@divider` | Horizontal divider (a `---` line is rendered as text) |
+| `//` | Comment at line start (not rendered) |
+| `\|` | Separator in tables, nav, tabs, radio and progress (grids use `:`) |
 
 ### 2.2 Block Components
 
 #### @page — Page Container
 ```
-@page "Page Title"
-  status: draft | review | approved
+@page "Page Title" status:draft
+  // every other line of the wireframe goes here, indented
 ```
+- `status:` — `draft` (default), `review` or `approved`; shown in the corner ribbon
+- The page title is not displayed; show titles with `@nav`, `@breadcrumb` or `@section`
 
 #### @nav — Top Navigation Bar
 ```
@@ -59,8 +62,8 @@ that can be embedded in markdown code blocks — exactly like Mermaid for flowch
 @section "Section Title" icon:info ref:FR-IH-001
   // child components here
 ```
-- `icon:` — icon name (info, check, lock, star, currency, play, chart, user, settings, doc)
-- `ref:` — SRS reference code(s), comma-separated
+- `icon:` — icon name (info, check, lock, star, currency, play, chart, user, settings, doc, clock, warning) or an emoji
+- `ref:` — SRS reference code(s), comma-separated without spaces (`ref:FR-1,FR-2`)
 
 #### @grid — Key-Value Info Display
 ```
@@ -113,17 +116,20 @@ that can be embedded in markdown code blocks — exactly like Mermaid for flowch
 
 #### @form — Form Layout
 ```
-@form cols:2 ref:FR-TY-001
-  text     "İhale Adı"          required
-  text     "İhale No"           readonly value:"IH-2027-00142"
-  select   "İhale Usulü"        options:"Açık İhale,Davetiye,Doğrudan Temin"
-  date     "İhale Tarihi"       required
-  number   "Tahmini Tutar (₺)"  required
-  textarea "Açıklama"           rows:3
-  file     "Teknik Şartname"    accept:".pdf,.docx"
-  checkbox "EPDK Uyumluluk Kontrolü yapıldı"
-  radio    "Öncelik"            options:"Yüksek,Normal,Düşük"
+@form cols:2
+  text      "İhale Adı"          required
+  text      "İhale No"           readonly  value:"IH-2027-00142"
+  select    "İhale Usulü"        options:"Açık İhale,Davetiye,Doğrudan Temin"
+  date      "İhale Tarihi"       required
+  number    "Tahmini Tutar (₺)"  required
+  textarea  "Açıklama"           rows:3
+  file      "Teknik Şartname"
+  checkbox  "EPDK Uyumluluk Kontrolü yapıldı"
+  radio     "Öncelik"            options:"Yüksek,Normal,Düşük"
 ```
+- Separate type, `"Label"` and each flag with **two or more spaces** (a single space drops the field)
+- Flags: `required`, `readonly`, `value:"…"`, `options:"a,b,c"`, `rows:N`
+- Blocks nested inside `@form` are dropped — put `@buttons` after the form as a sibling
 
 #### @note — Annotation/Note Box
 ```
@@ -167,6 +173,8 @@ that can be embedded in markdown code blocks — exactly like Mermaid for flowch
 @locked "Fiyat zarfı açılmadı — Yeterlik başarısız (KRL-TEK-002)"
   // child content shown dimmed underneath
   @table
+    # | İstekli | Fiyat | AUTB | Sıra | İşlem
+    --
     4 | Mega Enerji A.Ş. | — | — | — | —
     5 | Delta Teknik Ltd. | — | — | — | —
 ```
@@ -185,7 +193,7 @@ that can be embedded in markdown code blocks — exactly like Mermaid for flowch
 
 #### @columns — Side-by-side Layout
 ```
-@columns 2
+@columns
   @col
     // left content
   @col
@@ -201,10 +209,10 @@ that can be embedded in markdown code blocks — exactly like Mermaid for flowch
 #### @metric — KPI Metric Card
 ```
 @metric
-  "Aktif İhaleler" : **12** icon:chart {blue}
-  "Bekleyen Onay"  : **5** icon:clock {yellow}
-  "Toplam Tutar"   : **42.5M ₺** icon:currency {green}
-  "Tedarikçi"      : **128** icon:user {gray}
+  "Aktif İhaleler" : **12** {blue}
+  "Bekleyen Onay"  : **5** {yellow}
+  "Toplam Tutar"   : **42.5M ₺** {green}
+  "Tedarikçi"      : **128** {gray}
 ```
 
 ---
@@ -318,7 +326,7 @@ function renderCodeBlock(language, content, container) {
   if (language === 'mermaid') {
     mermaid.render('id', content, container);
   }
-  else if (language === 'wireframe') {
+  else if (language === 'omniware' || language === 'wireframe') {
     OmniWare.render(content, container);
   }
 }

@@ -6,7 +6,7 @@
 </div>
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
-![Version](https://img.shields.io/badge/version-2.2.5-teal)
+![Version](https://img.shields.io/badge/version-2.3.0-teal)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Electron](https://img.shields.io/badge/Electron-27.0-blue)
 
@@ -19,6 +19,10 @@
 ## Features
 
 ### Core Rendering
+- **GitHub-Flavoured Markdown** — Tables, task lists, strikethrough, autolinks; CommonMark line breaks
+- **GitHub-Compatible Anchors** — Headings get GitHub ids (Turkish letters included, `-1` for repeats), so `[x](#güç-kalitesi)` and `[x](other.md#bölüm)` work
+- **Front Matter** — A leading YAML block is shown as a small key/value table
+- **Local Images** — Relative image paths resolve against the Markdown file's folder
 - **Full HTML Support** — Render HTML tags inside markdown with DOMPurify sanitization
 - **Mermaid Diagrams** — All diagram types (flowchart, sequence, class, ER, Gantt, pie, git, mindmap, timeline, …) with popup pan/zoom viewer and SVG cache for instant dark-mode switching
 - **D2 Diagrams** — Architecture and system diagrams via Terrastruct D2 (WASM, dagre layout) with pan/zoom popup
@@ -31,9 +35,9 @@
 - **Live Markdown Editor** — Split-view editing with 400ms debounced preview and Fira Code font
 - **Inline Text Editing** — Right-click any selected text to edit it in place without a full page re-render
 - **Undo / Redo** — Ctrl+Z / Ctrl+Y undo/redo stack covering all view-mode edits
-- **PDF Export** — One-click export with full styling, diagrams, and syntax highlighting
-- **Word Export** — Export documents as Microsoft Word (.docx) files
-- **HTML Export** — Export as a standalone HTML file (fully offline, no CDN dependencies)
+- **PDF Export** — A4 export with full styling, diagrams, and syntax highlighting; optional Omnicore letterhead (`Ctrl+Shift+O`)
+- **Word Export** — Export documents as Microsoft Word (.docx) files (Mermaid diagrams and local images embedded)
+- **HTML Export** — Export as `name.html` plus a `name.files/` folder with styles and images
 - **Drag-and-Drop** — Drag any `.md` file onto the app window to open it instantly
 
 ### Diagram Dialogs
@@ -83,7 +87,7 @@ A comprehensive context menu is available anywhere with a right-click.
 ### File Watching & Performance
 - **File Change Detection** — Non-intrusive toast appears when the file is modified externally, with Reload / Dismiss buttons
 - **Smart Pause/Resume** — File watching automatically pauses while you have unsaved changes and resumes on save
-- **Emoji Shortcodes** — 900+ GitHub-style shortcodes (`:star:` → ⭐) converted before parsing
+- **Emoji Shortcodes** — 1100+ GitHub-style shortcodes (`:star:` → ⭐) in text (never inside code)
 - **Mermaid SVG Cache** — Unchanged diagrams are restored from cache without re-running Mermaid
 - **Partial DOM Rendering** — Formatting changes (bold, italic, code) patch only the affected node — no page refresh
 
@@ -155,9 +159,22 @@ Download the latest release from the [Releases page](https://github.com/OmniCore
 
 | Platform | File | Description |
 |----------|------|-------------|
-| Windows | `Omnicore-Markdown-Viewer-Setup-X.X.X.exe` | Windows installer |
-| Linux | `Omnicore.Markdown.Viewer-X.X.X.AppImage` | Portable AppImage |
-| Linux | `omnicore-markdown-viewer_X.X.X_amd64.deb` | Debian/Ubuntu package |
+| Windows | `Omnicore-Markdown-Viewer-Setup-X.Y.Z.exe` | Windows installer |
+| Windows | `Omnicore-Markdown-Viewer-X.Y.Z-portable.exe` | Portable, no installation |
+| Linux | `omnicore-markdown-viewer_X.Y.Z_amd64.deb` | Debian/Ubuntu package (recommended) |
+| Linux | `Omnicore-Markdown-Viewer-X.Y.Z.AppImage` | Portable AppImage |
+| macOS | `Omnicore-Markdown-Viewer-X.Y.Z-arm64.dmg` | Apple Silicon |
+| VS Code | `omnicore-markdown-viewer-X.Y.Z.vsix` | VS Code extension (see [VS Code Extension](#vs-code-extension)) |
+
+On Ubuntu/Debian:
+
+```bash
+gh release download -R OmniCoreST/omnicore-markdown-viewer -p '*_amd64.deb'
+sudo apt install ./omnicore-markdown-viewer_*_amd64.deb
+omnicore-markdown-viewer /path/to/file.md
+```
+
+Installed apps check GitHub for new releases on start and offer to update.
 
 ### Windows Installation Note
 
@@ -197,12 +214,14 @@ Output is placed in the `dist/` folder.
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+O` | Open markdown file |
-| `Ctrl+S` | Save file (edit mode) |
+| `Ctrl+S` | Save file (edit mode and right-click edits) |
+| `Ctrl+R` | Reload the file from disk |
+| `Ctrl+Shift+O` | Toggle the Omnicore letterhead for PDF export |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo view-mode edits |
 | `Ctrl+F` | Open search panel |
-| `Ctrl+B` | Bold selected text |
-| `Ctrl+I` | Italic selected text |
-| `Ctrl+`` ` `` | Code block |
+| `Ctrl+B` | Bold selected text (editor) |
+| `Ctrl+I` | Italic selected text (editor) |
+| `Ctrl+`` ` `` | Inline code (editor) |
 | `Ctrl+D` | Toggle dark mode |
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
 | `Ctrl+0` | Reset zoom to 100% |
@@ -232,7 +251,7 @@ Output is placed in the `dist/` folder.
 | Extension | Type |
 |-----------|------|
 | `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn` | Markdown |
-| `.mermaid` | Mermaid diagram (auto-wrapped in a code fence) |
+| `.mmd`, `.mermaid` | Mermaid diagram (auto-wrapped in a code fence) |
 | `.circuit.tsx` | tscircuit schematic (auto-wrapped in a code fence) |
 | `.ow` | OmniWare wireframe (auto-wrapped in a code fence) |
 
@@ -274,11 +293,16 @@ UI mockups and screen layouts:
 
 ````markdown
 ```omniware
-@page title="Dashboard"
-@nav brand="MyApp" items=["Home","Reports","Settings"]
-@section title="Overview"
-@metric label="Users" value="1,234" trend="up"
+@page "Dashboard" status:draft
+  @nav
+    MyApp | *Home* | Reports | Settings
+  @section "Overview" icon:chart
+    @metric
+      "Users" : **1,234** {green}
+      "Reports" : **56** {blue}
 ```
+
+Everything after `@page` is indented under it. See [OMNIWARE_SPEC.md](omniwire/OMNIWARE_SPEC.md) for the full language.
 ````
 
 ### tscircuit Schematics
@@ -287,15 +311,44 @@ Electronic circuit schematics using TSX:
 
 ````markdown
 ```tscircuit
-import { useRedLed, useResistor } from "@tsci/seveibar.red-led"
 export default () => (
-  <board width="10mm" height="10mm">
-    <led name="LED1" footprint="0402" />
+  <board width="20mm" height="20mm">
     <resistor name="R1" resistance="1k" footprint="0402" />
+    <led name="LED1" footprint="0402" />
+    <trace from=".R1 > .pin2" to=".LED1 > .pin1" />
   </board>
 )
 ```
+
+Rendering is offline, so `@tsci/*` registry imports are not available.
 ````
+
+---
+
+## VS Code Extension
+
+The same viewer is available inside VS Code (`vscode-extension/`). It becomes the default editor for `.md`, `.markdown`, `.mmd`, `.mermaid` and `.ow` files, so clicking a Markdown file shows the rendered document.
+
+- **Install:** download `omnicore-markdown-viewer-X.Y.Z.vsix` from the [Releases page](https://github.com/OmniCoreST/omnicore-markdown-viewer/releases), then run `code --install-extension omnicore-markdown-viewer-X.Y.Z.vsix` (or *Extensions → … → Install from VSIX*). Install a newer VSIX the same way to update.
+- **Edit:** the viewer is read-only; use **Omnicore: Open as Text** (editor title icon) or *Reopen Editor With… → Text Editor*. The viewer follows changes to the file and keeps its scroll position.
+- **Side preview:** `Ctrl+Shift+V` / `Ctrl+K V` from a Markdown text editor.
+- **Export:** the toolbar's PDF button prints with a locally installed Chrome, Edge or Chromium (set `omnicore.pdf.browserPath` if none is found); DOCX embeds images and Mermaid diagrams.
+- **Desktop-only:** D2, tscircuit, notes, image sliders, `@@@html` blocks, translation and the letterhead.
+
+Build it yourself with `cd vscode-extension && npm install && npx vsce package`.
+
+---
+
+## Claude Code Skill
+
+`skills/omnicore-markdown/` teaches Claude Code to write Markdown that renders well in this viewer (supported syntax, Mermaid 10.9.5 limits, the full OmniWare language) and ships a checker that renders every Mermaid/OmniWare block with the viewer's own libraries:
+
+```bash
+ln -s "$PWD/skills/omnicore-markdown" ~/.claude/skills/omnicore-markdown     # install for all projects
+python3 skills/omnicore-markdown/scripts/check_md.py docs/file.md --render   # check a document
+```
+
+`skills/tscircuit-schematics/` covers readable tscircuit drawings.
 
 ---
 
@@ -304,8 +357,8 @@ export default () => (
 | Library | Version | Purpose |
 |---------|---------|---------|
 | [Electron](https://www.electronjs.org/) | 27 | Cross-platform desktop framework |
-| [Marked](https://marked.js.org/) | latest | Fast GFM markdown parser |
-| [Mermaid](https://mermaid.js.org/) | latest | Diagram rendering engine |
+| [Marked](https://marked.js.org/) | 9.1.6 | Fast GFM markdown parser |
+| [Mermaid](https://mermaid.js.org/) | 10.9.5 | Diagram rendering engine |
 | [D2](https://d2lang.com/) | WASM | Architecture diagram language |
 | [Tabulator.js](https://tabulator.info/) | 6.2.5 | Interactive table library |
 | [PrismJS](https://prismjs.com/) | latest | Syntax highlighting |

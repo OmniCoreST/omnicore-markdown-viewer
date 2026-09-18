@@ -65,3 +65,6 @@ temp-*.html
 # Build artifacts
 release-artifacts/
 linux-builds/
+
+# Python
+__pycache__/
