@@ -6,7 +6,7 @@
 </div>
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)
-![Version](https://img.shields.io/badge/version-2.3.0-teal)
+![Version](https://img.shields.io/badge/version-2.3.2-teal)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Electron](https://img.shields.io/badge/Electron-27.0-blue)
 
