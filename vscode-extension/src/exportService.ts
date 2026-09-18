@@ -1,28 +1,73 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
+import { buildStandaloneHtml, findBrowser, PdfContent, printHtmlToPdf } from './pdfExport.js';
+
+/** `<folder of docPath>/<name of docPath or fallbackName>.<ext>` as a save-dialog default. */
+function defaultTarget(docPath: string | undefined, fallbackName: string, ext: string): vscode.Uri {
+  const base = (docPath ? path.basename(docPath) : fallbackName).replace(/\.[^/.]+$/, '') || 'document';
+  const dir = docPath && path.isAbsolute(docPath)
+    ? path.dirname(docPath)
+    : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  return vscode.Uri.file(dir ? path.join(dir, `${base}.${ext}`) : `${base}.${ext}`);
+}
 
 export class ExportService {
-  async savePdf(base64Data: string, defaultName: string): Promise<void> {
-    const nameWithoutExt = defaultName.replace(/\.[^/.]+$/, '');
-    const uri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(nameWithoutExt + '.pdf'),
+  constructor(private readonly extensionUri: vscode.Uri) {}
+
+  /**
+   * Prints the rendered document to PDF with a local Chromium-family browser.
+   * Without one, saves the standalone HTML so the user can print it from a browser.
+   */
+  async exportPdf(content: PdfContent, docPath?: string, fallbackName = 'document.pdf'): Promise<void> {
+    const html = buildStandaloneHtml(this.extensionUri.fsPath, content);
+    const configured = vscode.workspace.getConfiguration('omnicore').get<string>('pdf.browserPath');
+    const browser = findBrowser(configured);
+
+    if (!browser) {
+      const htmlUri = await vscode.window.showSaveDialog({
+        title: 'No Chrome/Chromium/Edge found: save printable HTML instead',
+        defaultUri: defaultTarget(docPath, fallbackName, 'html'),
+        filters: { 'HTML Files': ['html'], 'All Files': ['*'] }
+      });
+      if (!htmlUri) return;
+      await vscode.workspace.fs.writeFile(htmlUri, Buffer.from(html, 'utf8'));
+      const choice = await vscode.window.showWarningMessage(
+        `No Chromium-based browser was found for PDF export, so ${path.basename(htmlUri.fsPath)} was saved instead. ` +
+        'Open it in a browser and print it to PDF, or set "omnicore.pdf.browserPath".',
+        'Open HTML', 'Open Settings'
+      );
+      if (choice === 'Open HTML') {
+        vscode.env.openExternal(htmlUri);
+      } else if (choice === 'Open Settings') {
+        vscode.commands.executeCommand('workbench.action.openSettings', 'omnicore.pdf.browserPath');
+      }
+      return;
+    }
+
+    const pdfUri = await vscode.window.showSaveDialog({
+      defaultUri: defaultTarget(docPath, fallbackName, 'pdf'),
       filters: { 'PDF Files': ['pdf'], 'All Files': ['*'] }
     });
+    if (!pdfUri) return;
 
-    if (!uri) return;
-
-    // Strip data URI prefix if present
-    const raw = base64Data.replace(/^data:[^;]+;base64,/, '');
-    const buffer = Buffer.from(raw, 'base64');
-    await vscode.workspace.fs.writeFile(uri, buffer);
-    vscode.window.showInformationMessage(`PDF exported: ${path.basename(uri.fsPath)}`);
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Exporting ${path.basename(pdfUri.fsPath)}…` },
+        () => printHtmlToPdf(browser, html, pdfUri.fsPath)
+      );
+    } catch (err: any) {
+      vscode.window.showErrorMessage(`PDF export failed: ${err?.message ?? err}`);
+      return;
+    }
+    const open = await vscode.window.showInformationMessage(`PDF exported: ${path.basename(pdfUri.fsPath)}`, 'Open');
+    if (open === 'Open') {
+      vscode.env.openExternal(pdfUri);
+    }
   }
 
-  async saveWord(htmlContent: string, defaultName: string): Promise<void> {
-    const nameWithoutExt = defaultName.replace(/\.[^/.]+$/, '');
+  async saveWord(htmlContent: string, defaultName: string, docPath?: string): Promise<void> {
     const uri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(nameWithoutExt + '.docx'),
+      defaultUri: defaultTarget(docPath, defaultName, 'docx'),
       filters: { 'Word Documents': ['docx'], 'All Files': ['*'] }
     });
 
@@ -83,7 +128,7 @@ export class ExportService {
 
   async saveCsv(content: string, defaultName: string): Promise<void> {
     const uri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(defaultName),
+      defaultUri: defaultTarget(undefined, defaultName, 'csv'),
       filters: { 'CSV Files': ['csv'], 'All Files': ['*'] }
     });
 
@@ -95,7 +140,7 @@ export class ExportService {
 
   async saveJson(content: string, defaultName: string): Promise<void> {
     const uri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(defaultName),
+      defaultUri: defaultTarget(undefined, defaultName, 'json'),
       filters: { 'JSON Files': ['json'], 'All Files': ['*'] }
     });
 

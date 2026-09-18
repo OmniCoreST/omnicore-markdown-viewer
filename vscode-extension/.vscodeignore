@@ -5,3 +5,4 @@ esbuild.config.mjs
 .gitignore
 **/*.ts
 **/*.map
+scripts/**

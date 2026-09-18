@@ -2,7 +2,7 @@
   "name": "omnicore-markdown-viewer",
   "displayName": "Omnicore Markdown Viewer",
   "description": "Rich markdown preview with Mermaid diagrams, OmniWare wireframes, interactive tables (Tabulator.js), and PrismJS syntax highlighting",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "omnicore",
   "license": "MIT",
   "repository": {
@@ -148,18 +148,6 @@
         "key": "ctrl+k v",
         "mac": "cmd+k v",
         "when": "resourceLangId == markdown || resourceExtname == .mmd || resourceExtname == .mermaid || resourceExtname == .ow"
-      },
-      {
-        "command": "omnicore.toggleBold",
-        "key": "ctrl+b",
-        "mac": "cmd+b",
-        "when": "editorTextFocus && resourceLangId == markdown"
-      },
-      {
-        "command": "omnicore.toggleItalic",
-        "key": "ctrl+i",
-        "mac": "cmd+i",
-        "when": "editorTextFocus && resourceLangId == markdown"
       }
     ],
     "viewsContainers": {
@@ -179,6 +167,17 @@
         }
       ]
     },
+    "configuration": {
+      "title": "Omnicore Markdown Viewer",
+      "properties": {
+        "omnicore.pdf.browserPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Chrome, Chromium, Edge or Brave executable used for **Export to PDF** (printed headless). Empty: `CHROME_PATH`, then `google-chrome`, `chromium`, `microsoft-edge`, `brave-browser` … on `PATH`, then the usual install folders."
+        }
+      }
+    },
     "languages": [
       {
         "id": "mermaid",
@@ -196,7 +195,8 @@
     "vscode:prepublish": "node esbuild.config.mjs --production",
     "compile": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
-    "package": "vsce package"
+    "package": "vsce package",
+    "gen:emoji": "node scripts/gen-emoji-map.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",

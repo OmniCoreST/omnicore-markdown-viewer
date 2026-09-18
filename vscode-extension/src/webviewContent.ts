@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { prepareContent } from './fileHelpers.js';
 import { ExportService } from './exportService.js';
 import { PopupPanelManager } from './popupPanelManager.js';
@@ -8,61 +9,116 @@ export function isDarkTheme(kind: vscode.ColorThemeKind = vscode.window.activeCo
   return kind === vscode.ColorThemeKind.Dark || kind === vscode.ColorThemeKind.HighContrast;
 }
 
-export function createContentMessage(document: vscode.TextDocument) {
+/** Folder that contains the document (relative image paths resolve against it). */
+export function documentFolder(document: vscode.TextDocument): vscode.Uri {
+  return document.uri.with({ path: path.posix.dirname(document.uri.path) });
+}
+
+/** Extension media + the document folder + every workspace folder. */
+export function localResourceRoots(extensionUri: vscode.Uri, document?: vscode.TextDocument): vscode.Uri[] {
+  const roots = [vscode.Uri.joinPath(extensionUri, 'media')];
+  if (document && document.uri.scheme !== 'untitled') {
+    roots.push(documentFolder(document));
+  }
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    roots.push(folder.uri);
+  }
+  return roots;
+}
+
+export function createContentMessage(document: vscode.TextDocument, webview: vscode.Webview) {
+  const hasFolder = document.uri.scheme !== 'untitled';
   return {
     type: 'content-updated',
     content: prepareContent(document.getText(), document.fileName),
     filePath: document.fileName,
-    isDark: isDarkTheme()
+    isDark: isDarkTheme(),
+    // Webview URIs used to show local images: relative paths resolve against
+    // resourceBase, absolute paths against fileRoot.
+    resourceBase: hasFolder ? webview.asWebviewUri(documentFolder(document)).toString() : '',
+    fileRoot: webview.asWebviewUri(vscode.Uri.file('/')).toString()
   };
 }
 
+export interface WebviewMessageContext {
+  popupManager: PopupPanelManager;
+  exportService: ExportService;
+  /** Shows a linked local file; `fragment` is the decoded `#part` of the link ('' if none). */
+  openFile: (uri: vscode.Uri, fragment: string) => Thenable<unknown>;
+  /** Called after the webview finished rendering a document. */
+  onRendered?: (filePath: string) => void;
+}
+
+/** Local path of a link target, resolved against the linking document. */
+function resolveLinkedPath(linkPath: string, basePath: string | undefined): string {
+  const isDrivePath = /^[A-Za-z]:[\\/]/.test(linkPath);
+  if (isDrivePath || (path.isAbsolute(linkPath) && fs.existsSync(linkPath))) {
+    return linkPath;
+  }
+  if (path.isAbsolute(linkPath)) {
+    // "/docs/x.md" as on GitHub: relative to the workspace (repository) root.
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      const candidate = path.join(folder.uri.fsPath, linkPath);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return linkPath;
+  }
+  return basePath ? path.resolve(path.dirname(basePath), linkPath) : path.resolve(linkPath);
+}
+
 /**
- * Handles messages posted by the preview webview. `openFile` decides how a
+ * Handles messages posted by the preview webview. `ctx.openFile` decides how a
  * linked local file is shown (the side preview follows the text editor, the
  * custom editor opens the file with its associated editor).
  */
-export async function handleWebviewMessage(
-  msg: any,
-  popupManager: PopupPanelManager,
-  exportService: ExportService,
-  openFile: (uri: vscode.Uri) => Thenable<unknown>
-): Promise<void> {
+export async function handleWebviewMessage(msg: any, ctx: WebviewMessageContext): Promise<void> {
+  if (!msg || typeof msg.type !== 'string') return;
   switch (msg.type) {
     case 'open-mermaid-popup':
-      popupManager.openMermaidPopup(msg.svgContent, msg.isDarkMode);
+      ctx.popupManager.openMermaidPopup(msg.svgContent, msg.isDarkMode);
       break;
     case 'open-omniware-popup':
-      popupManager.openOmniWarePopup(msg.dslCode, msg.isDarkMode);
+      ctx.popupManager.openOmniWarePopup(msg.dslCode, msg.isDarkMode, msg.filePath);
       break;
     case 'open-table-popup':
-      popupManager.openTablePopup(msg.tableData, msg.isDarkMode);
+      ctx.popupManager.openTablePopup(msg.tableData, msg.isDarkMode);
       break;
     case 'export-pdf':
-      await exportService.savePdf(msg.data, msg.fileName || 'document.pdf');
+      await ctx.exportService.exportPdf(
+        { html: String(msg.html || ''), omniwareCss: msg.omniwareCss, title: msg.title },
+        msg.filePath,
+        msg.fileName || 'document.pdf'
+      );
       break;
     case 'export-word':
-      await exportService.saveWord(msg.htmlContent, msg.fileName || 'document.docx');
+      await ctx.exportService.saveWord(msg.htmlContent, msg.fileName || 'document.docx', msg.filePath);
       break;
     case 'open-external':
-      if (msg.url) {
-        vscode.env.openExternal(vscode.Uri.parse(msg.url));
+      if (typeof msg.url === 'string' && /^(https?:|mailto:|tel:)/i.test(msg.url)) {
+        vscode.env.openExternal(vscode.Uri.parse(msg.url, true));
       }
       break;
-    case 'open-file':
-      if (msg.filePath) {
-        // Resolve relative paths against the current document's directory
-        let resolvedPath = msg.filePath;
-        if (msg.basePath && !path.isAbsolute(msg.filePath)) {
-          resolvedPath = path.resolve(path.dirname(msg.basePath), msg.filePath);
-        }
-        try {
-          const uri = vscode.Uri.file(resolvedPath);
-          await openFile(uri);
-        } catch {
-          vscode.window.showWarningMessage(`Could not open file: ${resolvedPath}`);
-        }
+    case 'open-file': {
+      if (typeof msg.path !== 'string' || !msg.path) break;
+      const resolvedPath = resolveLinkedPath(msg.path, msg.basePath);
+      if (!fs.existsSync(resolvedPath)) {
+        vscode.window.showWarningMessage(`File not found: ${resolvedPath}`);
+        break;
       }
+      const uri = vscode.Uri.file(resolvedPath);
+      if (fs.statSync(resolvedPath).isDirectory()) {
+        vscode.commands.executeCommand('revealInExplorer', uri);
+        break;
+      }
+      try {
+        await ctx.openFile(uri, typeof msg.fragment === 'string' ? msg.fragment : '');
+      } catch {
+        vscode.window.showWarningMessage(`Could not open file: ${resolvedPath}`);
+      }
+      break;
+    }
+    case 'rendered':
+      ctx.onRendered?.(msg.filePath);
       break;
     case 'reveal-in-explorer':
       if (msg.filePath) {
@@ -75,7 +131,6 @@ export async function handleWebviewMessage(
 export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const media = (...pathSegments: string[]) =>
     webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', ...pathSegments));
-  const nonce = getNonce();
   const csp = webview.cspSource;
 
   // Library URIs
@@ -84,6 +139,8 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
   const dompurifyUri = media('libs', 'dompurify.min.js');
   const omniwareUri = media('omniwire', 'omniware.js');
   const mainJsUri = media('webview', 'main.js');
+  const sharedJsUri = media('webview', 'markdown-shared.js');
+  const emojiMapUri = media('webview', 'emoji-map.js');
   const stylesUri = media('webview', 'styles.css');
   const mermaidConfigUri = media('webview', 'mermaid-config.js');
   const omniwareConfigUri = media('webview', 'omniware-config.js');
@@ -103,7 +160,7 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${csp} 'unsafe-eval'; style-src ${csp} 'unsafe-inline' https://fonts.googleapis.com; font-src ${csp} https://fonts.gstatic.com; img-src ${csp} https: data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${csp} 'unsafe-eval'; style-src ${csp} 'unsafe-inline' https://fonts.googleapis.com; font-src ${csp} https://fonts.gstatic.com data:; img-src ${csp} https: data:; media-src ${csp} https: data:; connect-src ${csp};">
 <link rel="stylesheet" href="${stylesUri}">
 <link rel="stylesheet" href="${prismThemeUri}">
 <style>
@@ -188,16 +245,9 @@ export function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri
 <script src="${prismBundleUri}"></script>
 <script src="${mermaidConfigUri}"></script>
 <script src="${omniwareConfigUri}"></script>
+<script src="${sharedJsUri}"></script>
+<script src="${emojiMapUri}"></script>
 <script src="${mainJsUri}"></script>
 </body>
 </html>`;
-}
-
-function getNonce(): string {
-  let text = '';
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  for (let i = 0; i < 32; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
-  }
-  return text;
 }

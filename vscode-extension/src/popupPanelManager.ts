@@ -26,15 +26,9 @@ export class PopupPanelManager {
     );
 
     panel.webview.html = this.getMermaidHtml(panel.webview, svgContent, isDarkMode);
-
-    panel.webview.onDidReceiveMessage(async (msg) => {
-      if (msg.type === 'export-pdf') {
-        await this.exportService.savePdf(msg.data, 'mermaid-diagram.pdf');
-      }
-    });
   }
 
-  openOmniWarePopup(dslCode: string, isDarkMode: boolean): void {
+  openOmniWarePopup(dslCode: string, isDarkMode: boolean, docPath?: string): void {
     const panel = vscode.window.createWebviewPanel(
       'omnicoreOmniWare',
       'OmniWare Wireframe',
@@ -47,7 +41,12 @@ export class PopupPanelManager {
 
     panel.webview.onDidReceiveMessage(async (msg) => {
       if (msg.type === 'export-pdf') {
-        await this.exportService.savePdf(msg.data, 'wireframe.pdf');
+        const base = docPath ? path.join(path.dirname(docPath), path.basename(docPath).replace(/\.[^/.]+$/, '') + '-wireframe.pdf') : undefined;
+        await this.exportService.exportPdf(
+          { html: String(msg.html || ''), omniwareCss: msg.omniwareCss, title: 'OmniWare Wireframe', markdownBody: false },
+          base,
+          'wireframe.pdf'
+        );
       }
     });
   }
@@ -82,7 +81,7 @@ export class PopupPanelManager {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; font-src data:;">
 <style>
 body, html {
   margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
@@ -115,7 +114,7 @@ button:hover { background-color: ${isDarkMode ? '#4FCDD6' : '#1f8089'}; }
 <div class="ui-overlay">
   <h1>Mermaid Diagram</h1>
   <p>Scroll to Zoom | Click & Drag to Pan</p>
-  <button onclick="resetView()">Reset View</button>
+  <button id="resetViewBtn">Reset View</button>
 </div>
 <div id="svg-container-wrapper" style="width:100%;height:100%;position:relative;">
   <div id="viewport" style="transform-origin:0 0;">${svgContent}</div>
@@ -129,9 +128,13 @@ if (mermaidSvg) { mermaidSvg.style.display='block'; mermaidSvg.style.maxWidth='1
 let state = { scale:1, panning:false, pointX:0, pointY:0, startX:0, startY:0 };
 const config = { minScale:0.01, maxScale:10, zoomSpeed:0.1 };
 
-if (mermaidSvg) {
+function fitToView() {
+  state = { scale:1, panning:false, pointX:0, pointY:0, startX:0, startY:0 };
+  if (!mermaidSvg) { updateTransform(); return true; }
+  viewport.style.transform = 'none';
   const svgRect = mermaidSvg.getBoundingClientRect();
   const wrapperRect = svgWrapper.getBoundingClientRect();
+  if (!svgRect.width || !svgRect.height || !wrapperRect.width || !wrapperRect.height) { updateTransform(); return false; }
   const scaleX = (wrapperRect.width * 0.9) / svgRect.width;
   const scaleY = (wrapperRect.height * 0.9) / svgRect.height;
   const initialScale = Math.min(scaleX, scaleY, 1);
@@ -139,7 +142,12 @@ if (mermaidSvg) {
   state.pointX = (wrapperRect.width - svgRect.width * initialScale) / 2;
   state.pointY = (wrapperRect.height - svgRect.height * initialScale) / 2;
   updateTransform();
+  return true;
 }
+// Fit as soon as the panel has a size (while the page is parsed it can still be 0 x 0).
+let fitted = false;
+new ResizeObserver(() => { if (!fitted) fitted = fitToView(); }).observe(svgWrapper);
+document.getElementById('resetViewBtn').addEventListener('click', fitToView);
 
 svgWrapper.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -178,10 +186,6 @@ window.addEventListener('mouseup', () => { state.panning = false; svgWrapper.sty
 function updateTransform() {
   viewport.style.transform = 'translate(' + state.pointX + 'px, ' + state.pointY + 'px) scale(' + state.scale + ')';
 }
-window.resetView = function() {
-  state = { scale:1, panning:false, pointX:0, pointY:0, startX:0, startY:0 };
-  updateTransform();
-};
 </script>
 </body>
 </html>`;
@@ -189,7 +193,8 @@ window.resetView = function() {
 
   private getOmniWareHtml(webview: vscode.Webview, dslCode: string, isDarkMode: boolean, omniwareJsUri: vscode.Uri): string {
     const nonce = getNonce();
-    const escapedDsl = dslCode.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    // JSON with '<' escaped cannot end the <script> element early.
+    const dslJson = JSON.stringify(String(dslCode ?? '')).replace(/</g, '\\u003c');
 
     // Read OmniWare dark CSS
     const darkCSS = isDarkMode ? `<style>
@@ -219,7 +224,7 @@ window.resetView = function() {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${webview.cspSource} 'nonce-${nonce}'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src ${webview.cspSource} data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${webview.cspSource} 'nonce-${nonce}'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src ${webview.cspSource} data:;">
 <style>
 body, html {
   margin: 0; padding: 20px;
@@ -240,19 +245,24 @@ ${darkCSS}
 </head>
 <body>
 <div class="toolbar">
-  <button onclick="exportPDF()">Export PDF</button>
+  <button id="exportPdfBtn">Export PDF</button>
 </div>
 <div id="render-target"></div>
 <script src="${omniwareJsUri}"></script>
 <script nonce="${nonce}">
 const vscodeApi = acquireVsCodeApi();
-const dsl = \`${escapedDsl}\`;
+const dsl = ${dslJson};
 OmniWare.render(dsl, document.getElementById('render-target'));
 
-function exportPDF() {
-  // Use print as fallback since html2pdf needs unsafe-eval
-  window.print();
-}
+// PDF is printed by the extension host (webviews cannot call window.print()).
+document.getElementById('exportPdfBtn').addEventListener('click', () => {
+  const styles = document.getElementById('omniware-styles');
+  vscodeApi.postMessage({
+    type: 'export-pdf',
+    html: document.getElementById('render-target').innerHTML,
+    omniwareCss: styles ? styles.textContent : ''
+  });
+});
 </script>
 </body>
 </html>`;
@@ -266,13 +276,13 @@ function exportPDF() {
     tabulatorCssUri: vscode.Uri
   ): string {
     const nonce = getNonce();
-    const tableDataJson = JSON.stringify(tableData);
+    const tableDataJson = JSON.stringify(tableData).replace(/</g, '\\u003c');
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${webview.cspSource} 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${webview.cspSource} 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource} data:; img-src ${webview.cspSource} data:;">
 <link href="${tabulatorCssUri}" rel="stylesheet">
 <style>
 body, html {
@@ -345,9 +355,9 @@ button:hover { background-color: ${isDarkMode ? '#4FCDD6' : '#1f8089'}; }
   <div class="header-bar">
     <h1>Interactive Table Viewer</h1>
     <div class="controls">
-      <button onclick="clearFilters()">Clear Filters</button>
-      <button onclick="exportCSV()">Export CSV</button>
-      <button onclick="exportJSON()">Export JSON</button>
+      <button id="clearFiltersBtn">Clear Filters</button>
+      <button id="exportCsvBtn">Export CSV</button>
+      <button id="exportJsonBtn">Export JSON</button>
     </div>
   </div>
   <div class="table-wrapper">
@@ -395,6 +405,11 @@ function exportJSON() {
 }
 
 function clearFilters() { table.clearHeaderFilter(); }
+
+// Inline onclick handlers are blocked by the nonce-only CSP.
+document.getElementById('clearFiltersBtn').addEventListener('click', clearFilters);
+document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+document.getElementById('exportJsonBtn').addEventListener('click', exportJSON);
 </script>
 </body>
 </html>`;
